@@ -1,0 +1,268 @@
+# Combined CI Pipeline — All Agents
+# Copy this to .github/workflows/ci.yml for a complete CI setup.
+#
+# Agents: Rex (Code Quality) + Sentinel (Security) + Guardian (Dependencies)
+# Trigger: every PR and every push to main
+# Purpose: single pipeline with all automated quality gates
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+  checks: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =============================================
+  # REX — Code Quality Checks
+  # =============================================
+  code-quality:
+    name: "🦖 Rex: Code Quality"
+    runs-on: ubuntu-latest
+
+    outputs:
+      typecheck: ${{ steps.typecheck.outputs.status }}
+      lint: ${{ steps.lint.outputs.status }}
+      tests: ${{ steps.tests.outputs.status }}
+      build: ${{ steps.build.outputs.status }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript Check
+        id: typecheck
+        run: |
+          if npm run typecheck; then
+            echo "status=pass" >> $GITHUB_OUTPUT
+          else
+            echo "status=fail" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: ESLint
+        id: lint
+        run: |
+          if npm run lint; then
+            echo "status=pass" >> $GITHUB_OUTPUT
+          else
+            echo "status=fail" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Run Tests
+        id: tests
+        run: |
+          if npm run test -- --coverage; then
+            echo "status=pass" >> $GITHUB_OUTPUT
+          else
+            echo "status=fail" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Build
+        id: build
+        run: |
+          if npm run build; then
+            echo "status=pass" >> $GITHUB_OUTPUT
+          else
+            echo "status=fail" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+  # =============================================
+  # SENTINEL — Security Scanning
+  # =============================================
+  security:
+    name: "🛡️ Sentinel: Security"
+    runs-on: ubuntu-latest
+    needs: code-quality  # run after code quality (fail fast)
+
+    outputs:
+      sast: ${{ steps.sast.outputs.status }}
+      audit: ${{ steps.audit.outputs.status }}
+      secrets: ${{ steps.secrets.outputs.status }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Semgrep SAST
+        id: sast
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/owasp-top-ten
+            p/typescript
+        continue-on-error: true
+
+      - name: npm audit
+        id: audit
+        run: |
+          npm audit --audit-level=high --json > audit.json || true
+
+          CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' audit.json)
+          HIGH=$(jq '.metadata.vulnerabilities.high // 0' audit.json)
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            echo "status=fail" >> $GITHUB_OUTPUT
+            echo "::error::Found $CRITICAL critical and $HIGH high vulnerabilities"
+            exit 1
+          else
+            echo "status=pass" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Secrets Detection
+        id: secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+        continue-on-error: true
+
+  # =============================================
+  # GUARDIAN — Dependency Health (on package changes)
+  # =============================================
+  dependencies:
+    name: "🛡️ Guardian: Dependencies"
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.modified, 'package.json') ||
+      contains(github.event.head_commit.modified, 'package-lock.json') ||
+      github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Check outdated packages
+        run: |
+          npm outdated || true
+
+      - name: Check licenses
+        run: |
+          npx license-checker --summary || true
+
+  # =============================================
+  # CI Summary
+  # =============================================
+  summary:
+    name: "📊 CI Summary"
+    runs-on: ubuntu-latest
+    needs: [code-quality, security]
+    if: always()
+
+    steps:
+      - name: Generate Summary
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          # 🤖 CI Pipeline Summary
+
+          ## Code Quality (Rex)
+
+          | Check | Status |
+          |-------|--------|
+          | TypeScript | ${{ needs.code-quality.outputs.typecheck == 'pass' && '✅ Pass' || '❌ Fail' }} |
+          | ESLint | ${{ needs.code-quality.outputs.lint == 'pass' && '✅ Pass' || '❌ Fail' }} |
+          | Tests | ${{ needs.code-quality.outputs.tests == 'pass' && '✅ Pass' || '❌ Fail' }} |
+          | Build | ${{ needs.code-quality.outputs.build == 'pass' && '✅ Pass' || '❌ Fail' }} |
+
+          ## Security (Sentinel)
+
+          | Check | Status |
+          |-------|--------|
+          | SAST (Semgrep) | ${{ needs.security.outputs.sast != 'fail' && '✅ Pass' || '⚠️ Issues' }} |
+          | Vulnerability Audit | ${{ needs.security.outputs.audit == 'pass' && '✅ Pass' || '❌ Fail' }} |
+          | Secrets Detection | ${{ needs.security.outputs.secrets != 'fail' && '✅ Pass' || '⚠️ Issues' }} |
+
+          ---
+          *Pipeline powered by Rex, Sentinel, and Guardian agents.*
+          EOF
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const cq = '${{ needs.code-quality.result }}';
+            const sec = '${{ needs.security.result }}';
+
+            const allPassed = cq === 'success' && sec === 'success';
+
+            const body = `## 🤖 CI Pipeline ${allPassed ? '✅ Passed' : '❌ Failed'}
+
+            | Agent | Job | Status |
+            |-------|-----|--------|
+            | 🦖 Rex | Code Quality | ${cq === 'success' ? '✅' : '❌'} ${cq} |
+            | 🛡️ Sentinel | Security | ${sec === 'success' ? '✅' : '❌'} ${sec} |
+
+            ${!allPassed ? '### Please fix the failing checks before merge.' : '### Ready for review!'}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('CI Pipeline')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+      - name: Check overall status
+        if: needs.code-quality.result == 'failure' || needs.security.result == 'failure'
+        run: exit 1

@@ -1,0 +1,204 @@
+# Dependency Audit Pipeline — Guardian Agent
+# Copy this to .github/workflows/dependency-audit.yml in your project.
+#
+# Agent: Guardian (Dependency Auditor)
+# Trigger: weekly (Monday 9 AM UTC) and on package.json changes
+# Purpose: monitor dependencies for vulnerabilities, outdated packages, and license compliance
+
+name: Dependency Audit
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # every Monday at 9 AM UTC
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+  workflow_dispatch:  # manual trigger
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  guardian-audit:
+    name: Guardian Dependency Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Vulnerability scan
+      - name: Run npm audit
+        id: npm-audit
+        run: |
+          npm audit --json > audit-report.json || true
+
+          CRITICAL=$(jq '.metadata.vulnerabilities.critical // 0' audit-report.json)
+          HIGH=$(jq '.metadata.vulnerabilities.high // 0' audit-report.json)
+          MODERATE=$(jq '.metadata.vulnerabilities.moderate // 0' audit-report.json)
+          LOW=$(jq '.metadata.vulnerabilities.low // 0' audit-report.json)
+          TOTAL=$((CRITICAL + HIGH + MODERATE + LOW))
+
+          echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
+          echo "high=$HIGH" >> $GITHUB_OUTPUT
+          echo "moderate=$MODERATE" >> $GITHUB_OUTPUT
+          echo "low=$LOW" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+
+      # Check for outdated packages
+      - name: Check outdated packages
+        id: outdated
+        run: |
+          npm outdated --json > outdated-report.json || true
+
+          MAJOR=$(jq '[to_entries[] | select(.value.current != .value.latest and (.value.latest | split(".")[0]) != (.value.current | split(".")[0]))] | length' outdated-report.json)
+          MINOR=$(jq '[to_entries[] | select(.value.current != .value.latest and (.value.latest | split(".")[0]) == (.value.current | split(".")[0]) and (.value.latest | split(".")[1]) != (.value.current | split(".")[1]))] | length' outdated-report.json)
+          PATCH=$(jq '[to_entries[] | select(.value.current != .value.latest and (.value.latest | split(".")[0]) == (.value.current | split(".")[0]) and (.value.latest | split(".")[1]) == (.value.current | split(".")[1]))] | length' outdated-report.json)
+
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+
+      # License compliance check
+      - name: Check licenses
+        id: licenses
+        run: |
+          npm install -g license-checker
+
+          license-checker --json > licenses.json
+
+          # Find copyleft licenses
+          COPYLEFT=$(jq '[to_entries[] | select(.value.licenses | test("GPL|LGPL|AGPL|MPL|CDDL"; "i"))] | length' licenses.json)
+          UNKNOWN=$(jq '[to_entries[] | select(.value.licenses == null or .value.licenses == "UNKNOWN")] | length' licenses.json)
+
+          echo "copyleft=$COPYLEFT" >> $GITHUB_OUTPUT
+          echo "unknown=$UNKNOWN" >> $GITHUB_OUTPUT
+
+      # Generate summary report
+      - name: Generate audit report
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          # 🛡️ Guardian Dependency Audit Report
+
+          **Repository**: ${{ github.repository }}
+          **Date**: $(date -u +"%Y-%m-%d %H:%M UTC")
+
+          ## Vulnerability Summary
+
+          | Severity | Count | Action |
+          |----------|-------|--------|
+          | Critical | ${{ steps.npm-audit.outputs.critical }} | Immediate fix required |
+          | High | ${{ steps.npm-audit.outputs.high }} | Fix this week |
+          | Moderate | ${{ steps.npm-audit.outputs.moderate }} | Fix this sprint |
+          | Low | ${{ steps.npm-audit.outputs.low }} | Track in backlog |
+
+          ## Outdated Packages
+
+          | Type | Count |
+          |------|-------|
+          | Major version behind | ${{ steps.outdated.outputs.major }} |
+          | Minor version behind | ${{ steps.outdated.outputs.minor }} |
+          | Patch version behind | ${{ steps.outdated.outputs.patch }} |
+
+          ## License Compliance
+
+          | Issue | Count |
+          |-------|-------|
+          | Copyleft licenses (needs review) | ${{ steps.licenses.outputs.copyleft }} |
+          | Unknown licenses | ${{ steps.licenses.outputs.unknown }} |
+
+          ---
+          *Audited by Guardian (Dependency Auditor Agent)*
+          EOF
+
+      # Create issue for critical/high vulnerabilities
+      - name: Create issue for vulnerabilities
+        if: steps.npm-audit.outputs.critical > 0 || steps.npm-audit.outputs.high > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const critical = ${{ steps.npm-audit.outputs.critical }};
+            const high = ${{ steps.npm-audit.outputs.high }};
+
+            const title = `[Security] ${critical} critical, ${high} high severity vulnerabilities found`;
+
+            const body = `## 🚨 Dependency Vulnerabilities Detected
+
+            Guardian has detected vulnerabilities that require immediate attention.
+
+            | Severity | Count |
+            |----------|-------|
+            | Critical | ${critical} |
+            | High | ${high} |
+
+            ### Action Required
+
+            1. Run \`npm audit\` locally to see details
+            2. Run \`npm audit fix\` to auto-fix where possible
+            3. For breaking changes, run \`npm audit fix --force\` carefully
+            4. Update packages manually if automatic fix fails
+
+            ### Commands
+
+            \`\`\`bash
+            npm audit
+            npm audit fix
+            npm audit fix --force
+            \`\`\`
+
+            ---
+            *Created by Guardian (Dependency Auditor Agent)*`;
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'security,dependencies'
+            });
+
+            const existingIssue = issues.find(i => i.title.includes('vulnerabilities found'));
+
+            if (existingIssue) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['security', 'dependencies', 'priority-high']
+              });
+            }
+
+      # Fail the workflow if critical vulnerabilities found
+      - name: Check thresholds
+        if: steps.npm-audit.outputs.critical > 0
+        run: |
+          echo "::error::Critical vulnerabilities found! Failing build."
+          exit 1

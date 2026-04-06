@@ -12,24 +12,39 @@ Inspired by [gstacks.org](https://gstacks.org/) -- but purpose-built for softwar
 apexstack/
 ├── CLAUDE.md              # Stack entry point -- Claude Code reads this first
 ├── onboarding.yaml        # Your company config -- fill this in to adopt the stack
+│
 ├── roles/                 # AI agent role definitions
 │   ├── engineering/       # Backend, Frontend, QA, Platform, SRE, Tech Lead, Head of Eng
 │   ├── product/           # Product Manager, Product Analyst, Head of Product
 │   ├── design/            # UI Designer, UX Designer, Head of Design
 │   ├── security/          # Security Auditor, Penetration Tester, Head of Security
 │   └── data/              # Data Analyst, Data Engineer, Head of Data
+│
 ├── workflows/             # Development lifecycle processes
 │   ├── sdlc.md            # Full software development lifecycle
 │   ├── code-review.md     # Code review process and standards
 │   └── deployment.md      # Deployment and release process
+│
 ├── templates/             # Reusable document templates
 │   ├── prd.md             # Product Requirements Document
 │   ├── technical-design.md # Technical design document
 │   ├── adr.md             # Architecture Decision Record
 │   └── agdr.md            # Agent Decision Record (AI-specific)
+│
+├── .claude/               # Claude Code primitives (the runnable layer)
+│   ├── settings.json      # Hook wiring (PreToolUse)
+│   ├── hooks/             # Shell scripts: block git add -A, block main push, secrets scan, branch & PR validation, pre-push reminder
+│   ├── rules/             # Modular rule files imported via @.claude/rules/* (AgDR triggers, code standards, git conventions, PR quality, workflow gates)
+│   ├── agents/            # Sub-agents: Code Reviewer (Rex), Security Reviewer (Shield), Dependency Auditor (Guardian), PR Manager, Ticket Manager
+│   └── skills/            # Slash commands: /decide, /code-review, /security-review, /audit-deps, /write-spec
+│
+├── golden-paths/          # Reusable infra & ops templates
+│   └── pipelines/         # Drop-in GitHub Actions workflows (CI, code quality, security, dependency audit, PR title check, review check, SEO check)
+│
 ├── docs/                  # Documentation
 │   └── getting-started.md # Setup guide
-└── site/                  # Landing page (apexstack website)
+│
+└── site/                  # Landing page
     └── index.html
 ```
 
@@ -68,7 +83,21 @@ Add to your project's `CLAUDE.md`:
 @.apexstack/CLAUDE.md
 ```
 
-### 4. Start working
+### 4. Install the `.claude/` layer (optional but recommended)
+
+The markdown content above (roles, workflows, templates, rules) lives under `.apexstack/`. To activate the **executable** layer (hooks, agents, skills) you also need to make `.claude/` visible at the project root, because Claude Code only looks for hooks, agents, skills, and `settings.json` at `.claude/`:
+
+```bash
+# Option A — copy
+cp -r apexstack/.claude your-project/.claude
+
+# Option B — symlink (so updates to apexstack stay in sync)
+ln -s "$(pwd)/apexstack/.claude" your-project/.claude
+```
+
+After this, the hooks fire on `git`/`gh` commands, `/decide` and `/code-review` are available as slash commands, and the Code Reviewer agent can be invoked.
+
+### 5. Start working
 
 Claude Code now understands your team structure, processes, and standards. It can:
 
@@ -77,6 +106,9 @@ Claude Code now understands your team structure, processes, and standards. It ca
 - Generate documents from templates (PRDs, technical designs, ADRs)
 - Make structured technical decisions with Agent Decision Records
 - Enforce code review standards and quality gates
+- Run `/decide`, `/code-review`, `/security-review`, `/audit-deps`, `/write-spec` as slash commands
+- Block `git add -A`, direct pushes to main, and committed secrets via hooks
+- Drop the `golden-paths/pipelines/*.yml` files into `.github/workflows/` for CI
 
 ## Why ApexStack?
 

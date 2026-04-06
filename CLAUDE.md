@@ -132,6 +132,40 @@ NEVER use `git add -A` or `git add .` -- always add specific files.
 
 ---
 
+## CLAUDE CODE INTEGRATION
+
+ApexStack ships with a `.claude/` directory containing the Claude Code primitives that turn the markdown content above into a runnable workflow:
+
+| Layer | Path | Purpose |
+|-------|------|---------|
+| Hooks | `.claude/hooks/` | Shell scripts that block / warn on risky operations (`git add -A`, push to main, hardcoded secrets, branch / PR-title format) |
+| Rules | `.claude/rules/` | Modular rule files imported into your project's `CLAUDE.md` (AgDR triggers, code standards, git conventions, PR quality, workflow gates) |
+| Agents | `.claude/agents/` | Specialised sub-agents (Code Reviewer, Security Reviewer, Dependency Auditor, PR Manager, Ticket Manager) |
+| Skills | `.claude/skills/` | Slash commands users invoke (`/decide`, `/code-review`, `/security-review`, `/audit-deps`, `/write-spec`) |
+| Settings | `.claude/settings.json` | Wires the hooks to `PreToolUse` events |
+
+The hooks, agents, and skills are picked up automatically by Claude Code when this directory lives at the project root. The rules are imported via `@.claude/rules/*.md` from your project's `CLAUDE.md`.
+
+See `docs/getting-started.md` for the integration model — including how to install the `.claude/` layer alongside the rest of the stack.
+
+## CI/CD PIPELINES
+
+Reusable GitHub Actions workflows live at `golden-paths/pipelines/`:
+
+| Pipeline | Purpose |
+|----------|---------|
+| `ci.yml` | Combined pipeline (code quality + security + dependencies) |
+| `code-quality.yml` | TypeScript, ESLint, tests, build |
+| `security.yml` | Semgrep SAST + npm audit + secrets detection |
+| `dependency-audit.yml` | Weekly vulnerability + license scan |
+| `pr-title-check.yml` | Enforce ticket ID in PR titles |
+| `review-check.yml` | Block merge if Code Reviewer hasn't reviewed the latest commit |
+| `seo-check.yml` | SEO analysis for content files |
+
+Copy whichever you need into your project's `.github/workflows/`. Full details in `golden-paths/pipelines/README.md`.
+
+---
+
 ## QUICK REFERENCE
 
 | What | Where |
@@ -140,6 +174,12 @@ NEVER use `git add -A` or `git add .` -- always add specific files.
 | Role Definitions | `roles/` |
 | Workflows | `workflows/` |
 | Templates | `templates/` |
+| Hooks | `.claude/hooks/` |
+| Rules (modular) | `.claude/rules/` |
+| Agents | `.claude/agents/` |
+| Skills (slash commands) | `.claude/skills/` |
+| Hook wiring | `.claude/settings.json` |
+| CI pipelines | `golden-paths/pipelines/` |
 | Getting Started | `docs/getting-started.md` |
 
 ---

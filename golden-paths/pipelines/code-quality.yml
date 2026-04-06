@@ -1,0 +1,209 @@
+# Code Quality Pipeline — Rex Agent
+# Copy this to .github/workflows/code-quality.yml in your project.
+#
+# Agent: Rex (Code Reviewer)
+# Trigger: every PR
+# Purpose: automated code quality checks following the team's engineering standards
+
+name: Code Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  rex-review:
+    name: Rex Code Quality Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for proper diff
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # TypeScript type checking
+      - name: TypeScript Check
+        id: typecheck
+        run: |
+          npm run typecheck 2>&1 | tee typecheck-output.txt || true
+
+          ERRORS=$(grep -c "error TS" typecheck-output.txt || echo "0")
+          echo "errors=$ERRORS" >> $GITHUB_OUTPUT
+
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::Found $ERRORS TypeScript errors"
+          fi
+
+      # ESLint
+      - name: ESLint Check
+        id: lint
+        run: |
+          npm run lint -- --format json --output-file eslint-report.json || true
+
+          ERRORS=$(jq '[.[].errorCount] | add // 0' eslint-report.json)
+          WARNINGS=$(jq '[.[].warningCount] | add // 0' eslint-report.json)
+
+          echo "errors=$ERRORS" >> $GITHUB_OUTPUT
+          echo "warnings=$WARNINGS" >> $GITHUB_OUTPUT
+
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "::error::Found $ERRORS ESLint errors"
+          fi
+
+      # Prettier formatting check
+      - name: Format Check
+        id: format
+        run: |
+          npx prettier --check "**/*.{ts,tsx,js,jsx,json,md}" 2>&1 | tee format-output.txt || true
+
+          UNFORMATTED=$(grep -c "would be reformatted" format-output.txt || echo "0")
+          echo "unformatted=$UNFORMATTED" >> $GITHUB_OUTPUT
+
+      # Run tests
+      - name: Run Tests
+        id: tests
+        run: |
+          npm run test 2>&1 | tee test-output.txt || true
+
+          if grep -q "Tests:.*failed" test-output.txt; then
+            FAILED=$(grep "Tests:" test-output.txt | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo "0")
+            echo "failed=$FAILED" >> $GITHUB_OUTPUT
+            echo "::error::$FAILED tests failed"
+          else
+            echo "failed=0" >> $GITHUB_OUTPUT
+          fi
+
+      # Build check
+      - name: Build Check
+        id: build
+        run: |
+          npm run build 2>&1 | tee build-output.txt || true
+
+          if grep -qi "error" build-output.txt; then
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "::error::Build failed"
+          else
+            echo "success=true" >> $GITHUB_OUTPUT
+          fi
+
+      # Generate summary
+      - name: Generate Summary
+        run: |
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          # 🦖 Rex Code Quality Report
+
+          | Check | Status | Details |
+          |-------|--------|---------|
+          | TypeScript | ${{ steps.typecheck.outputs.errors == '0' && '✅ Pass' || '❌ Fail' }} | ${{ steps.typecheck.outputs.errors }} errors |
+          | ESLint | ${{ steps.lint.outputs.errors == '0' && '✅ Pass' || '❌ Fail' }} | ${{ steps.lint.outputs.errors }} errors, ${{ steps.lint.outputs.warnings }} warnings |
+          | Formatting | ${{ steps.format.outputs.unformatted == '0' && '✅ Pass' || '⚠️ Issues' }} | ${{ steps.format.outputs.unformatted }} files need formatting |
+          | Tests | ${{ steps.tests.outputs.failed == '0' && '✅ Pass' || '❌ Fail' }} | ${{ steps.tests.outputs.failed }} failed |
+          | Build | ${{ steps.build.outputs.success == 'true' && '✅ Pass' || '❌ Fail' }} | - |
+
+          ---
+          *Reviewed by Rex (Code Reviewer Agent)*
+          EOF
+
+      # Post PR comment
+      - name: Post Review Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const typeErrors = '${{ steps.typecheck.outputs.errors }}';
+            const lintErrors = '${{ steps.lint.outputs.errors }}';
+            const lintWarnings = '${{ steps.lint.outputs.warnings }}';
+            const formatIssues = '${{ steps.format.outputs.unformatted }}';
+            const testsFailed = '${{ steps.tests.outputs.failed }}';
+            const buildSuccess = '${{ steps.build.outputs.success }}';
+
+            const allPassed = typeErrors === '0' && lintErrors === '0' &&
+                             testsFailed === '0' && buildSuccess === 'true';
+
+            const status = allPassed ? '✅ All Checks Passed' : '❌ Issues Found';
+
+            const body = `## 🦖 Rex Code Quality Review
+
+            **Status**: ${status}
+
+            | Check | Result | Details |
+            |-------|--------|---------|
+            | TypeScript | ${typeErrors === '0' ? '✅' : '❌'} | ${typeErrors} type errors |
+            | ESLint | ${lintErrors === '0' ? '✅' : '❌'} | ${lintErrors} errors, ${lintWarnings} warnings |
+            | Formatting | ${formatIssues === '0' ? '✅' : '⚠️'} | ${formatIssues} files need formatting |
+            | Tests | ${testsFailed === '0' ? '✅' : '❌'} | ${testsFailed} tests failed |
+            | Build | ${buildSuccess === 'true' ? '✅' : '❌'} | ${buildSuccess === 'true' ? 'Success' : 'Failed'} |
+
+            ${!allPassed ? `
+            ### 🔧 How to Fix
+
+            \`\`\`bash
+            # Fix TypeScript errors
+            npm run typecheck
+
+            # Fix ESLint errors
+            npm run lint -- --fix
+
+            # Fix formatting
+            npx prettier --write .
+
+            # Run tests
+            npm run test
+            \`\`\`
+            ` : ''}
+
+            ---
+            *Reviewed by Rex (Code Reviewer Agent)*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Rex Code Quality Review')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+      # Fail if critical issues
+      - name: Check Pass/Fail
+        if: |
+          steps.typecheck.outputs.errors != '0' ||
+          steps.lint.outputs.errors != '0' ||
+          steps.tests.outputs.failed != '0' ||
+          steps.build.outputs.success != 'true'
+        run: |
+          echo "::error::Code quality checks failed. Please fix the issues above."
+          exit 1
