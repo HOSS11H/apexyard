@@ -1,0 +1,47 @@
+# =============================================================================
+# ApexYard Portfolio Registry — flashX
+# =============================================================================
+#
+# Read by /projects, /inbox, /status, /tasks, /stakeholder-update, /handover.
+# Skills never modify this file automatically — edit by hand or let /handover
+# suggest the snippet.
+#
+
+version: 1
+
+projects:
+  - name: tmt-eye-app
+    repo: sourcya/tmt-eye-app
+    docs: projects/tmt-eye-app
+    status: active
+    tier: P1
+    roles:
+      - tech-lead
+      - frontend-engineer
+      - ui-designer
+    tags:
+      - frontend
+      - react
+    ticket_prefix: CU
+
+  - name: tmt-cockpit-app
+    repo: sourcya/tmt-cockpit-app
+    docs: projects/tmt-cockpit-app
+    status: active
+    tier: P1
+    roles:
+      - tech-lead
+      - frontend-engineer
+      - ui-designer
+    tags:
+      - frontend
+      - react
+    ticket_prefix: CU
+
+defaults:
+  status: active
+  tier: P1
+  ticket_prefix: CU
+  roles:
+    - tech-lead
+    - frontend-engineer

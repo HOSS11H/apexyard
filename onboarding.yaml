@@ -29,10 +29,10 @@
 # Company Information
 # -----------------------------------------------------------------------------
 company:
-  name: "Your Company Name"
-  mission: "What you're building and why"
-  vision: "Where you're headed long-term"
-  website: "https://yourcompany.com"
+  name: "flashX"
+  mission: ""
+  vision: ""
+  website: ""
 
   # Core values that guide decision-making
   values:
@@ -40,11 +40,9 @@ company:
     - "Ship and learn"
     - "Keep it simple"
 
-  # What kind of software you build
-  products:
-    - name: "Main Product"
-      description: "Brief description of what it does"
-      type: "web-app"  # web-app, mobile-app, api, cli, library, saas
+  # Solo operator running a portfolio of frontend projects.
+  # Individual products are registered in apexyard.projects.yaml.
+  products: []
 
 # -----------------------------------------------------------------------------
 # Team Structure
@@ -61,26 +59,12 @@ company:
 #   Data:        head-of-data, data-analyst, data-engineer
 #
 team:
-  - name: "Team Lead"
+  - name: "HOSSAM SAID"
     role: "tech-lead"
     department: "engineering"
 
-  - name: "Developer 1"
-    role: "backend-engineer"
-    department: "engineering"
-
-  - name: "Developer 2"
-    role: "frontend-engineer"
-    department: "engineering"
-
-  # Uncomment and add more team members as needed:
-  # - name: "PM"
-  #   role: "product-manager"
-  #   department: "product"
-  #
-  # - name: "Designer"
-  #   role: "ux-designer"
-  #   department: "design"
+  # Solo operator — wears every hat. Claude activates the right role
+  # per task via .claude/rules/role-triggers.md.
 
 # -----------------------------------------------------------------------------
 # Tech Stack
@@ -91,17 +75,17 @@ tech_stack:
   language: "TypeScript"          # Primary language
   runtime: "Node.js"              # Runtime environment
   framework: "React"              # Frontend framework (React, Vue, Svelte, etc.)
-  backend: "Express"              # Backend framework (Express, Fastify, NestJS, etc.)
-  database: "PostgreSQL"          # Primary database
-  hosting: "AWS"                  # Cloud provider (AWS, GCP, Azure, Vercel, etc.)
+  backend: ""                     # Frontend-only portfolio
+  database: ""                    # No backend DB
+  hosting: "Vercel"               # Cloud provider (AWS, GCP, Azure, Vercel, etc.)
   ci_cd: "GitHub Actions"         # CI/CD platform
   testing: "Vitest"               # Test framework
   e2e_testing: "Playwright"       # E2E test framework
+  styling: "Tailwind CSS"         # Default — override per project if different
 
   # Additional tools (uncomment what you use):
   # orm: "Prisma"
   # state_management: "Zustand"
-  # styling: "Tailwind CSS"
   # api_style: "REST"             # REST, GraphQL, gRPC
   # iac: "Terraform"              # Infrastructure as Code tool
   # monitoring: "Datadog"
@@ -111,13 +95,15 @@ tech_stack:
 # Project Management
 # -----------------------------------------------------------------------------
 project_management:
-  tool: "GitHub Issues"           # GitHub Issues, Linear, Jira, etc.
+  tool: "ClickUp"                 # GitHub Issues, Linear, Jira, etc.
   sprint_duration: "1 week"       # Sprint/cycle length
   branching_strategy: "feature-branch"  # feature-branch, gitflow, trunk-based
 
   # Ticket ID prefix (used in branch names and PR titles)
-  # Examples: "GH" for GitHub Issues (#42), "PROJ" for Jira (PROJ-42)
-  ticket_prefix: "GH"
+  # ClickUp custom task IDs (format: CU-123) — required for branch/PR
+  # validators to pass. Default ClickUp IDs (alphanumeric) won't match
+  # the ^[A-Z]+-[0-9]+$ pattern enforced by .claude/hooks/.
+  ticket_prefix: "CU"
 
 # -----------------------------------------------------------------------------
 # Quality Standards
@@ -127,7 +113,9 @@ quality:
   test_coverage_target: 80
 
   # Required approvals before merge
-  required_reviews: 1
+  # Solo — Rex (code-reviewer agent) + CEO approval gate still apply
+  # via .claude/hooks/block-unreviewed-merge.sh
+  required_reviews: 0
 
   # Enforce these checks before merge
   required_checks:
