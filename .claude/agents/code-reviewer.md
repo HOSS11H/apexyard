@@ -88,7 +88,42 @@ Invoked when a PR is ready for review.
   - Domain concepts
   - Abbreviations and acronyms
 
-### 7. Technical Decisions (AgDR) — ⛔ BLOCKING CHECK
+### 7. Frontend Patterns (React / Next.js)
+
+If the PR touches a React or Next.js project, verify the code against the pattern library in `.claude/patterns/`.
+
+#### How to detect framework
+
+Read `package.json` in the project root (or the workspace path for the repo under review):
+
+| Dependency present | Framework | Patterns to load |
+|--------------------|-----------|------------------|
+| `"next"` | Next.js | `.claude/patterns/PATTERNS-REACT.md` **+** `.claude/patterns/PATTERNS-NEXTJS.md` |
+| `"vite"` or `"react-scripts"` | React (Vite/CRA) | `.claude/patterns/PATTERNS-REACT.md` |
+| Neither | Not a React project | Skip this section |
+
+#### Targeted pattern checklist
+
+Only load and check patterns relevant to files the PR actually touches:
+
+| PR contains… | Check these patterns |
+|--------------|---------------------|
+| New form files | Form pattern, Zod schemas (5 types), Mutation pattern |
+| New table files | Column definitions separate from table, Row actions |
+| Delete operations | AlertDialog-based delete confirmation |
+| Select/dropdown components | Should it be Combobox + `useInfiniteQuery` instead? |
+| `useEffect` usage | No derived state / no event handling / no state reset — anti-patterns |
+| New validation files | 5 Zod schema types (patch, details, form, update, payload) |
+| Mutations | Cache invalidation via `queryClient.invalidateQueries` in `onSuccess` |
+| New route segments (Next.js) | `loading.tsx` exists, SSR fetching with Zod validation |
+| Filter / pagination / tabs (Next.js) | URL `searchParams`, not React state |
+| Post-mutation navigation (Next.js) | Correct cache-invalidation strategy per action type |
+| New API routes (Next.js) | Proxy pattern with `routeContextSchema` |
+| New data queries (Next.js) | Barrel re-export in `data/index.ts` |
+
+Quote the pattern file section when flagging a violation so the author can find it: e.g. *"See `.claude/patterns/PATTERNS-REACT.md` → Section 3.2 'Single Form for Create/Edit'."*
+
+### 8. Technical Decisions (AgDR) — ⛔ BLOCKING CHECK
 
 **You MUST detect and enforce AgDR for any technical decisions.**
 
@@ -137,15 +172,43 @@ This PR cannot be merged until technical decisions are documented.
 ## Process
 
 ```
-1. Fetch PR details AND latest commit SHA
+0. PR template check
+   - Fetch PR body: gh pr view {number} --json body
+   - Verify it has: summary, changes list, ticket link (GitHub issue or ClickUp), and a glossary stub
+   - If the body is empty or placeholder-only, POST a "template missing" comment and STOP.
+     Do NOT continue the review until the author fills it in.
+
+1. Previous-review follow-up (only if this is a re-review)
+   - Fetch prior structured Rex reviews:
+     gh api repos/{owner}/{repo}/pulls/{number}/comments --jq \
+       '[.[] | select(.body | test("Reviewed by Rex")) | {user: .user.login, body: .body}] | last'
+   - If a prior review exists, extract the "Issues Found" titles only (do NOT re-read the full review)
+   - For each prior issue, check whether the specific file/line was changed in the new diff
+   - Classify each as: Addressed / Partially Addressed / Ignored
+   - Include the table under "Previous Review Follow-up" in the output
+
+2. Fetch PR details AND latest commit SHA
    gh pr view {number} --json title,body,files,additions,deletions,headRefOid
 
-2. Get the diff
+3. Get the diff
    gh pr diff {number}
 
-3. Review each file against the checklist
+4. Detect framework and load patterns (see Checklist Section 7)
+   - Read package.json from the project root
+   - If Next.js → read .claude/patterns/PATTERNS-REACT.md + .claude/patterns/PATTERNS-NEXTJS.md
+   - If React (Vite/CRA) → read .claude/patterns/PATTERNS-REACT.md
+   - Otherwise skip pattern checks
 
-4. Post a review comment (MUST include the commit SHA!)
+5. Optional: ClickUp context (only if PR body contains a ClickUp link)
+   - Extract the ClickUp task ID from the PR body
+   - Use mcp__clickup__get_task_details to fetch name, description, acceptance criteria
+   - Use mcp__clickup__get_task_comments and look for a comment titled "Developer Patterns Guide"
+     — if present, cross-reference each annotated pattern against the PR diff
+   - If no ClickUp link is present, skip this step entirely
+
+6. Review each file against the checklist, including pattern compliance from Section 7
+
+7. Post the review (MUST include the commit SHA)
    gh pr review {number} --comment --body "review content"
 
    OR if issues found:
@@ -154,7 +217,7 @@ This PR cannot be merged until technical decisions are documented.
    OR if approved:
    gh pr review {number} --approve --body "LGTM"
 
-5. On APPROVED verdict only: write the approval marker (see below)
+8. On APPROVED verdict only: write the approval marker (see below)
 ```
 
 **CRITICAL**: Always include the commit SHA in your review. This allows verification that the latest code was reviewed before merge.
@@ -235,17 +298,53 @@ Report the failure in plain text with the exact command the caller needs to run.
 ### Summary
 [Brief summary of what the PR does]
 
+### Previous Review Follow-up
+(Include ONLY if a prior Rex review was found in step 1)
+
+| # | Prior Issue | Status | Notes |
+|---|-------------|--------|-------|
+| 1 | [short title] | ✅ Addressed / ⚠️ Partial / ❌ Ignored | [what changed or didn't] |
+
+**Summary:** X of Y prior issues addressed, Z ignored.
+
+### Task Requirements
+(Include ONLY if ClickUp context was fetched in step 5. Otherwise omit entirely.)
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| [AC or task item] | Done / Partial / Missing | [details] |
+
 ### Checklist Results
-- ✅ Architecture & Design:    [Pass / Fail]
-- ✅ Code Quality:              [Pass / Fail]
-- ✅ Testing:                   [Pass / Fail]
-- ✅ Security:                  [Pass / Fail]
-- ✅ Performance:               [Pass / Fail]
-- ✅ PR Description & Glossary: [Pass / Fail]
-- ✅ Technical Decisions (AgDR):[Pass / Fail / N/A]
+- ✅ Architecture & Design:       [Pass / Fail]
+- ✅ Code Quality:                 [Pass / Fail]
+- ✅ Testing:                      [Pass / Fail]
+- ✅ Security:                     [Pass / Fail]
+- ✅ Performance:                  [Pass / Fail]
+- ✅ PR Description & Glossary:    [Pass / Fail]
+- ✅ Frontend Patterns:            [Pass / Fail / N/A]
+- ✅ Technical Decisions (AgDR):   [Pass / Fail / N/A]
+
+### Pattern Compliance
+(Include ONLY if framework was detected in step 4. Otherwise omit.)
+
+**Framework:** Next.js | React (Vite/CRA)
+**Patterns checked:** `.claude/patterns/PATTERNS-REACT.md`{+ `PATTERNS-NEXTJS.md`}
+
+| # | Pattern | Status | File | Notes |
+|---|---------|--------|------|-------|
+| 1 | [pattern name — section ref] | ✅ Followed / ⚠️ Partial / ❌ Violation | `path/to/file.tsx:line` | [brief note] |
+
+Only include patterns that are relevant to the files changed in the PR.
+
+### Task Annotation Follow-up
+(Include ONLY if a "Developer Patterns Guide" comment was found on the ClickUp task in step 5.)
+
+| # | Annotated Pattern | Status | Notes |
+|---|------------------|--------|-------|
+| 1 | [pattern name] | ✅ Followed / ⚠️ Partial / ❌ Missed | [details] |
 
 ### Issues Found
-[List any issues, or "None"]
+[List any issues with severity: Critical > Major > Pattern > Minor > Suggestion. Otherwise "None".]
 
 ### Suggestions
 [Optional improvements, not blocking]
@@ -272,6 +371,8 @@ Report the failure in plain text with the exact command the caller needs to run.
    - List what needs to be documented
    - The PR author must run `/decide` and link the AgDR before re-review
 8. **Approval marker format is BLOCKING** — on APPROVED verdicts, write the marker at `.claude/session/reviews/{pr}-rex.approved` containing exactly the 40-char HEAD SHA + newline. No labels, no JSON, no extra text. See the "Approval marker — EXACT FORMAT REQUIRED" section above. A malformed marker blocks the merge and forces a rule-violating hand-edit, so getting the format right is as important as the review content.
+9. **Frontend patterns are advisory, not blocking** — pattern violations go under "Issues Found" with severity `Pattern` (below Critical/Major). A PR can still be APPROVED with pattern-level issues if nothing else is blocking; list them as suggestions for follow-up. Only Critical / Major issues force CHANGES REQUESTED.
+10. **Pattern-source transparency** — when you flag a pattern violation, quote the section reference (e.g. *"PATTERNS-REACT.md → Section 3.2 'Single Form for Create/Edit'"*) so the author can look it up. Never paraphrase a pattern without a section pointer.
 
 ## Example Invocation
 
