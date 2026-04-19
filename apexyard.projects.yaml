@@ -41,6 +41,7 @@ projects:
     tags:
       - frontend
       - react
+      - vite
     ticket_prefix: CU
 
 defaults:

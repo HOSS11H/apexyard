@@ -19,6 +19,10 @@ Fleet management / dispatch web app — drivers, vehicles, maintenance, dispatch
 - Roadmap: _not yet created_ — run `/roadmap` when ready
 - Stakeholder updates: `updates/` _(not yet created)_
 
+## Review pattern note
+
+This project is **Next.js 16 (App Router)**. Rex should load both `~/.claude/PATTERNS-REACT.md` (universal patterns 1–10) **and** `~/.claude/PATTERNS-NEXTJS.md` (App Router patterns 11–15: URL searchParams for list state, SSR queries in `data/queries/`, API route proxies, SSR cache invalidation, `loading.tsx` / `error.tsx`).
+
 ## Known risks (from handover)
 
 1. No automated tests — 644 commits in 90 days with no safety net

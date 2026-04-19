@@ -72,15 +72,18 @@ team:
 # Define your technology choices. This helps Claude Code give relevant advice.
 #
 tech_stack:
-  language: "TypeScript"          # Primary language
+  language: "TypeScript"          # Primary language across the portfolio
   runtime: "Node.js"              # Runtime environment
-  framework: "Next.js"            # Frontend framework (React, Vue, Svelte, etc.)
-  backend: ""                     # Frontend-only portfolio
-  database: ""                    # No backend DB
-  hosting: "Vercel"               # Cloud provider (AWS, GCP, Azure, Vercel, etc.)
+  # Framework varies per repo (Next.js, React + Vite, etc.) — recorded on
+  # each project's entry in apexyard.projects.yaml (tags) and per-project
+  # README. This field stays blank so nothing lies about the portfolio.
+  framework: ""
+  backend: ""                     # Frontend-only portfolio (backends live elsewhere)
+  database: ""                    # No backend DB in this portfolio
+  hosting: "Vercel"               # Default — override per project if different
   ci_cd: "GitHub Actions"         # CI/CD platform
-  testing: "Vitest"               # Test framework
-  e2e_testing: "Playwright"       # E2E test framework
+  testing: "Vitest"               # Default — per project may differ
+  e2e_testing: "Playwright"       # Default — per project may differ
   styling: "Tailwind CSS"         # Default — override per project if different
 
   # Additional tools (uncomment what you use):
