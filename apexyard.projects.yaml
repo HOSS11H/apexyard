@@ -32,16 +32,22 @@ projects:
   - name: tmt-cockpit-app
     repo: sourcya/tmt-cockpit-app
     docs: projects/tmt-cockpit-app
-    status: active
+    status: handover
     tier: P1
     roles:
       - tech-lead
       - frontend-engineer
       - ui-designer
+      - platform-engineer
+      - security-auditor
+      - sre
     tags:
       - frontend
       - react
       - vite
+      - firebase
+      - pwa
+      - capacitor
     ticket_prefix: CU
 
 defaults:
