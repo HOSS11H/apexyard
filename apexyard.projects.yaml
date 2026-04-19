@@ -13,15 +13,20 @@ projects:
   - name: tmt-eye-app
     repo: sourcya/tmt-eye-app
     docs: projects/tmt-eye-app
-    status: active
+    status: handover
     tier: P1
     roles:
       - tech-lead
       - frontend-engineer
       - ui-designer
+      - platform-engineer
+      - security-auditor
+      - sre
     tags:
       - frontend
-      - react
+      - nextjs
+      - i18n
+      - auth
     ticket_prefix: CU
 
   - name: tmt-cockpit-app

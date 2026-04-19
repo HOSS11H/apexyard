@@ -74,7 +74,7 @@ team:
 tech_stack:
   language: "TypeScript"          # Primary language
   runtime: "Node.js"              # Runtime environment
-  framework: "React"              # Frontend framework (React, Vue, Svelte, etc.)
+  framework: "Next.js"            # Frontend framework (React, Vue, Svelte, etc.)
   backend: ""                     # Frontend-only portfolio
   database: ""                    # No backend DB
   hosting: "Vercel"               # Cloud provider (AWS, GCP, Azure, Vercel, etc.)
