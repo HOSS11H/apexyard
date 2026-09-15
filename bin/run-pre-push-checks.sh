@@ -161,7 +161,18 @@ echo "pre-push checks:" >&2
 # empty repo produces a confusing non-zero rather than a clean skip. (It does
 # NOT fall back to a default glob: .markdownlint.json is a rules-only format
 # and cannot carry `globs`.)
-MARKDOWNLINT_CMD="command -v npx >/dev/null 2>&1 || { echo 'INFO: npx not found — markdownlint check skipped. Install Node.js (https://nodejs.org) to enable it locally.'; exit 0; }; md_files=\$(git ls-files '*.md' 2>/dev/null); [ -z \"\$md_files\" ] && { echo 'INFO: no tracked markdown files found — markdownlint check skipped.'; exit 0; }; echo \"\$md_files\" | tr '\\n' '\\0' | xargs -0 npx --yes markdownlint-cli2 2>&1"
+#
+# `-s 7000` caps each batch's command line so the check works on Windows. There,
+# `npx` is a .cmd shim, so the invocation goes through cmd.exe and inherits its
+# 8191-character command-line limit. A repo with a few hundred tracked markdown
+# files exceeds that in one batch, and the check dies with "The command line is
+# too long." before markdownlint ever runs. xargs on Linux and macOS splits at
+# the far larger ARG_MAX on its own, so the bug is Windows-only; capping the
+# size is a no-op for them beyond producing more, smaller batches.
+#
+# Batching preserves the gate's semantics: xargs still exits non-zero when any
+# batch reports a finding, so a real lint failure still blocks the push.
+MARKDOWNLINT_CMD="command -v npx >/dev/null 2>&1 || { echo 'INFO: npx not found — markdownlint check skipped. Install Node.js (https://nodejs.org) to enable it locally.'; exit 0; }; md_files=\$(git ls-files '*.md' 2>/dev/null); [ -z \"\$md_files\" ] && { echo 'INFO: no tracked markdown files found — markdownlint check skipped.'; exit 0; }; echo \"\$md_files\" | tr '\\n' '\\0' | xargs -0 -s 7000 npx --yes markdownlint-cli2 2>&1"
 run_check "markdownlint" "$MARKDOWNLINT_CMD" || true
 
 # 2. shellcheck — .claude/hooks/*.sh, severity=warning
