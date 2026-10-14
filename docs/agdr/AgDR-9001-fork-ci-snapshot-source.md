@@ -30,7 +30,7 @@ status: executed
 
 ## Decision
 
-Chosen: **patch the fork's `tests.yml` and report the bug upstream**, because it makes the hook test suite run in the fork now and gives the divergence a clear end.
+Chosen: **patch the fork's `tests.yml` and report the bug upstream**. The hook test suite runs in the fork now. The divergence has a clear end.
 
 ## Consequences
 
