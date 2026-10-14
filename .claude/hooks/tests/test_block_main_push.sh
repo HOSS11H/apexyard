@@ -27,6 +27,11 @@
 
 set -u
 
+# Isolate from live Claude Code session pin/cache (me2resh/apexyard#1549).
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/_test-session-isolation.sh"
+
+
 SRC_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 HOOK_SRC="$SRC_ROOT/.claude/hooks/block-main-push.sh"
 LIB_SRC="$SRC_ROOT/.claude/hooks/_lib-extract-push-ref.sh"
@@ -405,8 +410,8 @@ rm -rf "$SB"
 # The settings wrapper uses the session pin to locate this hook. The pin must
 # not make a protected branch in an unrelated scratch repository look governed
 # by the pinned fork. A real command in the pinned fork must remain blocked.
-if grep -qF 'exec env APEXYARD_OPS_SCOPE_GUARD=1' \
-  "$SRC_ROOT/.claude/settings.json"; then
+if grep -qF 'APEXYARD_OPS_SCOPE_GUARD=1' \
+  "$SRC_ROOT/.claude/hooks/dispatch-bash.sh"; then
   echo "PASS [settings wiring enables ops-root scope guard]"
   PASS=$((PASS+1))
 else

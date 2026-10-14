@@ -464,7 +464,7 @@ Split-portfolio mode also houses two layers of company-specific customisation th
 
 #### How discovery works
 
-- **Custom skills** — Claude Code discovers skills by walking `.claude/skills/<name>/SKILL.md` in the active fork. We don't control that glob path. The `link-custom-skills.sh` SessionStart hook fixes that gap: on every session start it iterates `<private_repo>/custom-skills/<name>/`, and for each subdirectory containing a `SKILL.md` it creates a gitignored symlink at `.claude/skills/<name>/` pointing into the private dir. Claude Code then sees the skill transparently. **Custom skills with the same name as a framework skill win** — the hook moves the framework version to `.claude/skills/<name>.framework.bak/` (gitignored) and prints a one-line warning at SessionStart so the override is visible. **Windows is not supported in v1**; the hook prints a one-line manual-install pointer and skips. Same shape as the LSP install on Windows.
+- **Custom skills** — Claude Code discovers skills by walking `.claude/skills/<name>/SKILL.md` in the active fork. We don't control that glob path. The `link-custom-skills.sh` SessionStart hook fixes that gap: on every session start it iterates `<private_repo>/custom-skills/<name>/`, and for each subdirectory containing a `SKILL.md` it creates a gitignored symlink at `.claude/skills/<name>/` pointing into the private dir. Claude Code then sees the skill transparently. **Custom skills with the same name as a framework skill win** — the hook moves the framework version to `.claude/skill-framework-bak/<name>/` (outside the skill root Cursor reads; AgDR-0187 / #1377) and prints a one-line warning at SessionStart so the override is visible. Restoring the framework skill from that bak is a manual move after you remove the override symlink; `/update` does not restore it. Open the ops fork in Cursor, not a parent folder that also contains the portfolio. **Windows is not supported in v1**; the hook prints a one-line manual-install pointer and skips. Same shape as the LSP install on Windows.
 - **Custom handbooks** — Rex's agent prompt (`.claude/agents/code-reviewer.md` § 8) gains a second discovery path. The `portfolio_custom_handbooks_dir` resolver in `_lib-portfolio-paths.sh` returns the private dir; Rex globs both the public `handbooks/` tree AND the private one using the same architecture/general/language convention. No symlinks involved — handbooks aren't discovered by Claude Code, only by Rex's prompt, so a second glob is enough. Per-handbook precedence on overlapping topics: **Rex applies BOTH layers** and cites both when relevant; conflict resolution is the operator's responsibility (write it as prose in the custom handbook).
 
 #### Setup
@@ -530,7 +530,7 @@ Next code review, Rex globs both `handbooks/architecture/*.md` AND `<private>/cu
 
 ### Centralised agent routing — `agent-routing.yaml`
 
-ApexYard ships 24 Claude Code sub-agents (19 role-derived personas + 5 utility agents — Rex, Hakim, Munir, Tariq, Idris). The framework picks sensible per-agent model defaults from the matrix in [AgDR-0050 § Axis 2](agdr/AgDR-0050-agent-runtime-overhaul.md) (Opus for depth + reasoning, Sonnet for the majority + tool-use-heavy, Haiku for checklist-shaped repeatable work). Adopters override those defaults — switch the QA Engineer to Sonnet for higher-recall AC runs, route the Data Analyst through a local Ollama endpoint, raise the Pen Tester's invocation timeout — via a single YAML file kept in the private portfolio repo.
+ApexYard ships 23 Claude Code sub-agents (20 role-derived personas plus utility agents — Rex, Hakim, Munir, Tariq, Naqid). The framework picks sensible per-agent model defaults from the matrix in [AgDR-0050 § Axis 2](agdr/AgDR-0050-agent-runtime-overhaul.md) (Opus for depth + reasoning, Sonnet for the majority + tool-use-heavy, Haiku for checklist-shaped repeatable work). Adopters override those defaults — switch the QA Engineer to Sonnet for higher-recall AC runs, route the Data Analyst through a local Ollama endpoint, raise the Pen Tester's invocation timeout — via a single YAML file kept in the private portfolio repo.
 
 This sibling pattern to **Custom templates** (path-mirroring overrides; see AgDR-0023) and **Custom skills + handbooks** above puts every adopter-specific routing choice in one centrally-edited surface, source-controlled in the private repo, never leaking to the public fork.
 
@@ -766,7 +766,7 @@ your-org/apexyard/                ← your fork, cloned locally (the "ops repo")
 │   ├── agents/
 │   └── settings.json
 │
-├── roles/                         ← 19 role definitions, upstream from apexyard
+├── roles/                         ← 20 role definitions, upstream from apexyard
 │   ├── engineering/
 │   ├── product/
 │   ├── design/
@@ -1069,6 +1069,8 @@ For Asana (per-task lookup by GID):
 ```
 
 If your tracker has no CLI, use `kind: "custom"` with a `view_command` that calls `curl` and a `normalise_jq` filter to map the response into `{state, title, url, labels}`. If you want to disable existence verification entirely (rare — accepted gap when no CLI exists), set `kind: "none"` — the hooks fall back to shape-only validation via `tracker.id_pattern`. The registry-level `ticket_prefix` field is still respected per-project for the `/start-ticket` branch-suggestion step.
+
+Do not enable verbose HTTP tracing inside `create_command`, `list_command`, `review_command`, or `view_command`. Commands such as `curl -v` and `set -x` print request headers, including `Authorization`, to stderr. Stderr from those templates reaches the terminal and the agent transcript. Redirect that output yourself if you need it.
 
 **What if I only have one repo?** Fork apexyard anyway and register that one repo. The skills work the same way. When you add a second project, just append to the registry — no migration, no re-setup.
 

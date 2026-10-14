@@ -28,6 +28,11 @@
 
 set -u
 
+# Isolate from live Claude Code session pin/cache (me2resh/apexyard#1549).
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/_test-session-isolation.sh"
+
+
 # Test isolation: don't let a live session pin escape onto the real fork.
 unset APEXYARD_OPS_PIN_DIR CLAUDE_CODE_SESSION_ID 2>/dev/null || true
 export APEXYARD_OPS_DISABLE_PIN=1
@@ -76,7 +81,7 @@ projects:
     repo: example/example
 YAML
     mkdir -p .claude/hooks migrations
-    for f in _lib-tracker.sh _lib-read-config.sh _lib-portfolio-paths.sh _lib-ops-root.sh _lib-detect-bash-write.sh _lib-path-resolve.sh _lib-active-ticket.sh; do
+    for f in _lib-tracker.sh _lib-read-config.sh _lib-portfolio-paths.sh _lib-ops-root.sh _lib-detect-bash-write.sh _lib-path-resolve.sh _lib-active-ticket.sh _lib-ticket-path-exemptions.sh; do
       [ -f "$HOOK_DIR/$f" ] && cp "$HOOK_DIR/$f" ".claude/hooks/$f"
     done
     cp "$HOOK_SCRIPT" .claude/hooks/require-migration-ticket.sh
@@ -437,6 +442,47 @@ else
   record_fail "no active-ticket marker → block (Gate 1)"
 fi
 rm -rf "$SB"
+
+# =============================================================================
+# me2resh/apexyard#1368 — Alembic tooling files (env.py, script.py.mako) are
+# NOT migrations: pass-through (allow, no tracker call), even with no active
+# ticket at all — same shape as Case 10's non-migration-path check.
+# =============================================================================
+for ALEMBIC_TOOLING_PATH in \
+  "alembic/env.py" \
+  "alembic/script.py.mako" \
+  "db/migrations/env.py" \
+  "db/migrations/script.py.mako"
+do
+  SB=$(make_fork)
+  install_mock "$SB" gh 'exit 99'
+  if run_hook "$SB" "$SB/$ALEMBIC_TOOLING_PATH" 0; then
+    record_pass "#1368 Alembic tooling ($ALEMBIC_TOOLING_PATH) → pass-through allow, no ticket needed"
+  else
+    record_fail "#1368 Alembic tooling ($ALEMBIC_TOOLING_PATH) → pass-through allow, no ticket needed"
+  fi
+  rm -rf "$SB"
+done
+
+# =============================================================================
+# me2resh/apexyard#1368 negative controls — real revision scripts must still
+# be gated: no active ticket → block (Gate 1), same as any other migration
+# path. Proves the tooling exemption above did not weaken detection of
+# alembic/versions/*.py or the generic migrations/* catch-all.
+# =============================================================================
+for REAL_MIGRATION_PATH in \
+  "alembic/versions/0001_add_users.py" \
+  "db/migrations/0001_add_users.py"
+do
+  SB=$(make_fork)
+  install_mock "$SB" gh 'exit 99'
+  if run_hook "$SB" "$SB/$REAL_MIGRATION_PATH" 2; then
+    record_pass "#1368 control: real revision script ($REAL_MIGRATION_PATH) still requires a ticket → block"
+  else
+    record_fail "#1368 control: real revision script ($REAL_MIGRATION_PATH) still requires a ticket → block"
+  fi
+  rm -rf "$SB"
+done
 
 # =============================================================================
 # Case 12: jira happy path (#761). Body is now mapped for jira, so an OPEN,
@@ -1471,44 +1517,185 @@ fi
 rm -rf "$SB" "$(dirname "$WS_DIR")"
 
 # --- Selection parity: compare the raw target selected by dev and this hook --
-# The baseline is the parent commit, not a copied predicate. If the checkout
-# cannot provide it, the test fails instead of silently skipping.
-_parity_base=$(git rev-parse HEAD^ 2>/dev/null || true)
-_parity_fail=0
-if [ -z "$_parity_base" ]; then
-  record_fail "#1182 selection parity baseline is available"
-else
-  _parity_baseline=$(mktemp "$HOOK_DIR/.baseline-1182.XXXXXX")
-  if ! git show "$_parity_base:.claude/hooks/require-migration-ticket.sh" >"$_parity_baseline" 2>/dev/null; then
-    record_fail "#1182 selection parity baseline can be read"
-    _parity_fail=1
+# The baseline is the parent commit, not a copied predicate. Missing or
+# unreadable baselines fail. Parents before #1182 receive a labelled N/A pass.
+# APEXYARD_PARITY_BASELINE_FILE overrides the baseline file for tests only.
+check_selection_parity() {
+  _parity_base=$(git rev-parse --short HEAD^ 2>/dev/null || true)
+  _parity_fail=0
+  if [ -z "${APEXYARD_PARITY_BASELINE_FILE:-}" ] && [ -z "$_parity_base" ]; then
+    record_fail "#1182 selection parity baseline is available"
   else
-    # Instrument only the baseline's first-match selector. The current hook's
-    # explicit selection-test branch emits the same raw spelling before gating.
-    _parity_instrumented=$(mktemp "$HOOK_DIR/.baseline-1182-instrumented.XXXXXX")
-    awk '
-      /if is_migration_path "\$_tgt"; then/ && !done { print; print "      if [ \"${APEXYARD_SELECTION_TEST:-}\" = \"1\" ]; then printf \"%s\\n\" \"$_tgt\"; exit 0; fi"; done=1; next }
-      { print }
-    ' "$_parity_baseline" >"$_parity_instrumented"
-    for _payload_target in "/tmp/migrations/001.sql" "/tmp/db/002.sql"; do
-      _payload=$(jq -nc --arg c "cat > $_payload_target" '{tool_name:"Bash",tool_input:{command:$c}}')
-      _current=$(APEXYARD_SELECTION_TEST=1 bash "$HOOK_SCRIPT" <<<"$_payload" 2>/dev/null || true)
-      _baseline=$(APEXYARD_SELECTION_TEST=1 bash "$_parity_instrumented" <<<"$_payload" 2>/dev/null || true)
-      if [ "$_current" != "$_baseline" ]; then
-        _parity_fail=1
-        echo "FAIL: #1182 selection parity for $_payload_target (current='$_current' baseline='$_baseline')"
-      fi
-    done
-    rm -f "$_parity_instrumented"
-    if [ "$_parity_fail" -eq 0 ]; then
-      record_pass "#1182 selection parity compares current and parent implementations"
+    _parity_baseline=$(mktemp "$HOOK_DIR/.baseline-1182.XXXXXX")
+    if [ -n "${APEXYARD_PARITY_BASELINE_FILE:-}" ]; then
+      _parity_read=0
+      [ -f "$APEXYARD_PARITY_BASELINE_FILE" ] &&
+        cat "$APEXYARD_PARITY_BASELINE_FILE" >"$_parity_baseline" 2>/dev/null || _parity_read=1
     else
-      FAIL=$((FAIL + 1))
-      FAILED_CASES="$FAILED_CASES\n  - #1182 selection parity compares current and parent implementations"
+      git show "$_parity_base:.claude/hooks/require-migration-ticket.sh" >"$_parity_baseline" 2>/dev/null
+      _parity_read=$?
     fi
+    if [ "$_parity_read" -ne 0 ]; then
+      record_fail "#1182 selection parity baseline can be read"
+      _parity_fail=1
+    elif ! grep -Fq 'if is_migration_path "$_tgt"; then' "$_parity_baseline" &&
+         ! grep -Fq 'APEXYARD_SELECTION_TEST' "$_parity_baseline"; then
+      record_pass "#1182 selection parity N/A: parent hook ($_parity_base) predates #1182"
+    else
+      # Instrument only the baseline's first-match selector. The current hook's
+      # explicit selection-test branch emits the same raw spelling before gating.
+      _parity_instrumented=$(mktemp "$HOOK_DIR/.baseline-1182-instrumented.XXXXXX")
+      awk '
+        /if is_migration_path "\$_tgt"; then/ && !done { print; print "      if [ \"${APEXYARD_SELECTION_TEST:-}\" = \"1\" ]; then printf \"%s\\n\" \"$_tgt\"; exit 0; fi"; done=1; next }
+        { print }
+      ' "$_parity_baseline" >"$_parity_instrumented"
+      for _payload_target in "/tmp/migrations/001.sql" "/tmp/db/002.sql"; do
+        _payload=$(jq -nc --arg c "cat > $_payload_target" '{tool_name:"Bash",tool_input:{command:$c}}')
+        _current=$(APEXYARD_SELECTION_TEST=1 bash "$HOOK_SCRIPT" <<<"$_payload" 2>/dev/null || true)
+        _baseline=$(APEXYARD_SELECTION_TEST=1 bash "$_parity_instrumented" <<<"$_payload" 2>/dev/null || true)
+        if [ "$_current" != "$_baseline" ]; then
+          _parity_fail=1
+          echo "FAIL: #1182 selection parity for $_payload_target (current='$_current' baseline='$_baseline')"
+        fi
+      done
+      rm -f "$_parity_instrumented"
+      if [ "$_parity_fail" -eq 0 ]; then
+        record_pass "#1182 selection parity compares current and parent implementations"
+      else
+        record_fail "#1182 selection parity compares current and parent implementations"
+      fi
+    fi
+    rm -f "$_parity_baseline"
   fi
-  rm -f "$_parity_baseline"
+}
+check_selection_parity
+
+# Exercise the same parity block without relying on the real parent commit.
+_parity_fixture=$(mktemp)
+printf '#!/bin/bash\nexit 0\n' >"$_parity_fixture"
+_parity_out=$(APEXYARD_PARITY_BASELINE_FILE="$_parity_fixture" check_selection_parity)
+if [[ "$_parity_out" == *"PASS: #1182 selection parity N/A: parent hook ("* ]] &&
+   [[ "$_parity_out" == *") predates #1182"* ]] &&
+   [[ "$_parity_out" != *"FAIL:"* ]]; then
+  record_pass "#1577 pre-#1182 baseline receives a labelled N/A pass"
+else
+  record_fail "#1577 pre-#1182 baseline receives a labelled N/A pass" "$_parity_out"
 fi
+
+cp "$HOOK_SCRIPT" "$_parity_fixture"
+_parity_out=$(APEXYARD_PARITY_BASELINE_FILE="$_parity_fixture" check_selection_parity)
+if [[ "$_parity_out" == *"PASS: #1182 selection parity compares current and parent implementations"* ]] &&
+   [[ "$_parity_out" != *"N/A"* ]] && [[ "$_parity_out" != *"FAIL:"* ]]; then
+  record_pass "#1577 post-#1182 baseline still compares selections"
+else
+  record_fail "#1577 post-#1182 baseline still compares selections" "$_parity_out"
+fi
+rm -f "$_parity_fixture"
+
+# =============================================================================
+# Cases 45-47 (H1, Hakim's security review on PR #1404). Cases 39-41 above
+# use the SAME fixture shape as cases 36-38: the ops marker (#42) is OPEN but
+# NOT migration-labelled, and the project's own marker (#99) IS. Both an
+# empty marker (fail-closed) and an approved-but-wrong ops marker exit 2
+# there, so cases 39-41 cannot tell "refused outright" from "fell through to
+# the wrong ticket and got refused for a DIFFERENT reason". This fixture
+# inverts which side is valid: the ops marker now carries a real migration
+# label + AgDR, and the project's own marker does not. If a tilde-spelled
+# write into the project's migrations/ ever fell through to the ops ticket,
+# THIS fixture would ALLOW it (rc=0) -- the #1159 wrong-ticket approval this
+# gate exists to refuse. Asserting the stderr text, not just rc=2, proves
+# the write was refused outright ("No active ticket set") rather than judged
+# against the ops ticket and refused for lacking the migration label.
+# =============================================================================
+mk_inverted_fixture() {   # echoes the sandbox path
+  local sb; sb=$(make_fork)
+  mkdir -p "$sb/workspace/example/migrations"
+  # Ops-level marker: OPEN, migration-labelled + AgDR -> would ALLOW.
+  set_marker "$sb" "test-org/test-repo" 42
+  # Project's own marker: OPEN but NOT migration-labelled -> would BLOCK.
+  mkdir -p "$sb/.claude/session/tickets"
+  printf 'repo=%s\nnumber=%s\n' "test-org/test-repo" 99 > "$sb/.claude/session/tickets/example"
+  install_mock "$sb" gh 'case "$*" in
+  *42*) echo "{\"state\":\"OPEN\",\"labels\":[{\"name\":\"migration\"}],\"body\":\"docs/agdr/AgDR-0001-db-migration.md\"}" ;;
+  *)    echo "{\"state\":\"OPEN\",\"labels\":[],\"body\":\"\"}" ;;
+esac'
+  echo "$sb"
+}
+
+for tilde in '~root' '~+' '~-'; do
+  SB=$(mk_inverted_fixture)
+  STDERR_FILE=$(mktemp)
+  input=$(jq -nc --arg c "cat > $tilde/$MIG" '{tool_name:"Bash", tool_input:{command:$c}}')
+  (
+    cd "$SB" || exit 99
+    PATH="$SB/bin:$PATH" .claude/hooks/require-migration-ticket.sh <<<"$input" >/dev/null 2>"$STDERR_FILE"
+  )
+  rc=$?
+  if [ "$rc" = 2 ] && grep -q "No active ticket set" "$STDERR_FILE"; then
+    record_pass "#1159/H1 '$tilde/' target refuses outright, never reaches the ops ticket"
+  else
+    record_fail "#1159/H1 '$tilde/' target refuses outright, never reaches the ops ticket" \
+      "rc=$rc stderr=$(cat "$STDERR_FILE")"
+  fi
+  rm -f "$STDERR_FILE"
+  rm -rf "$SB"
+done
+
+# =============================================================================
+# Cases #1483: relative migrations/ spellings must all block without a ticket.
+# Default patterns are `*/`-anchored, so bare `migrations/001.sql` used to
+# miss every arm while `./migrations/001.sql` matched. Cover Bash redirects
+# and Write/Edit file_path for the three relative spellings named in the
+# ticket. No active migration ticket → exit 2 for each.
+# =============================================================================
+for _1483_spelling in \
+  'migrations/001.sql' \
+  './migrations/001.sql' \
+  'sub/../migrations/001.sql'
+do
+  SB=$(make_fork)
+  mkdir -p "$SB/migrations" "$SB/sub"
+  install_mock "$SB" gh 'exit 99'
+  if run_hook_bash "$SB" "echo x > $_1483_spelling" 2; then
+    record_pass "#1483 bash: relative '$_1483_spelling' with no ticket → block"
+  else
+    record_fail "#1483 bash: relative '$_1483_spelling' with no ticket → block"
+  fi
+  rm -rf "$SB"
+done
+
+for _1483_spelling in \
+  'migrations/001.sql' \
+  './migrations/001.sql' \
+  'sub/../migrations/001.sql'
+do
+  SB=$(make_fork)
+  mkdir -p "$SB/migrations" "$SB/sub"
+  install_mock "$SB" gh 'exit 99'
+  if run_hook "$SB" "$_1483_spelling" 2; then
+    record_pass "#1483 Write: relative '$_1483_spelling' with no ticket → block"
+  else
+    record_fail "#1483 Write: relative '$_1483_spelling' with no ticket → block"
+  fi
+  rm -rf "$SB"
+done
+
+# --- #1502 (review of PR #1516): a sed `w` migration file next to an
+# interpreter write must still reach this gate. The extractor held such a
+# target back, and this gate exits 0 on an empty list. No ticket: block.
+SB=$(make_fork)
+for c in \
+  "python3.12 -c \"open('x','w').write('y')\" ; sed -n 'w migrations/001_add_table.sql' in.txt" \
+  "python3 -W error::ResourceWarning -c \"open('x','w').write('y')\" ; sed -n 'w migrations/001_add_table.sql' in.txt" \
+  "python3 -c \"open('x','w').write('y')\" && sed -n 'w migrations/001_add_table.sql' in.txt" \
+  "python3 -c \"open('x','w').write('y')\" ; sed -n 'w migrations/001_add_table.sql' in.txt"; do
+  if run_hook_bash "$SB" "$c" 2; then
+    record_pass "#1502 sed w migration target next to an interpreter write blocks: $c"
+  else
+    record_fail "#1502 sed w migration target next to an interpreter write blocks: $c"
+  fi
+done
+rm -rf "$SB"
 
 # =============================================================================
 # Summary

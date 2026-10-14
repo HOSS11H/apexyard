@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  deriveGatesFromDispatcher,
   deriveGatesFromSettings,
   extractCommandGlob,
   extractHookRelativePath,
@@ -120,7 +121,7 @@ function fixtureSettings(): RawSettings {
         },
         {
           matcher: "Read|Glob|Grep",
-          hooks: [{ type: "command", command: "bash -c '.../.claude/hooks/suggest-mcp-search.sh'" }],
+          hooks: [{ type: "command", command: "bash -c '.../.claude/hooks/example-advisory.sh'" }],
         },
       ],
     },
@@ -151,10 +152,10 @@ test("deriveGatesFromSettings marks a hook unconditional for a matcher when its 
 
 test("deriveGatesFromSettings only applies commandGlob to the Bash matcher — non-Bash rows never carry an `if` in this framework's own wiring", () => {
   const gates = deriveGatesFromSettings(fixtureSettings());
-  const mcpGate = gates.find((g) => g.name === "suggest-mcp-search")!;
-  assert.ok(mcpGate.wires.every((w) => w.commandGlob === null));
+  const readGate = gates.find((g) => g.name === "example-advisory")!;
+  assert.ok(readGate.wires.every((w) => w.commandGlob === null));
   assert.deepEqual(
-    mcpGate.wires.map((w) => w.claudeMatcher).sort(),
+    readGate.wires.map((w) => w.claudeMatcher).sort(),
     ["Glob", "Grep", "Read"],
   );
 });
@@ -162,6 +163,26 @@ test("deriveGatesFromSettings only applies commandGlob to the Bash matcher — n
 test("deriveGatesFromSettings returns an empty table for settings with no PreToolUse hooks", () => {
   assert.deepEqual(deriveGatesFromSettings({}), []);
   assert.deepEqual(deriveGatesFromSettings({ hooks: {} }), []);
+});
+
+test("deriveGatesFromDispatcher parses unconditional and command-specific routing comments", () => {
+  const source = [
+    "# APEXYARD_DISPATCH_GATE: Bash|*|require-active-ticket.sh",
+    "# APEXYARD_DISPATCH_GATE: Bash|gh pr merge *|block-unreviewed-merge.sh",
+    "# APEXYARD_DISPATCH_GATE: Bash|gh api *|block-unreviewed-merge.sh",
+    "run_hook require-active-ticket.sh",
+  ].join("\n");
+  const gates = deriveGatesFromDispatcher(source);
+  const ticket = gates.find((g) => g.name === "require-active-ticket");
+  const merge = gates.find((g) => g.name === "block-unreviewed-merge");
+  assert.ok(ticket);
+  assert.equal(ticket!.wires.length, 1);
+  assert.equal(ticket!.wires[0]?.commandGlob, "*");
+  assert.ok(merge);
+  assert.deepEqual(
+    merge!.wires.map((w) => w.commandGlob).sort(),
+    ["gh api *", "gh pr merge *"],
+  );
 });
 
 // ---------------------------------------------------------------------
@@ -196,11 +217,15 @@ test("gateMatchesClaudeMatcher: a gate never matches a matcher it isn't wired to
 // #840 C5's "reuse where the two runtimes allow" rests on.
 // ---------------------------------------------------------------------
 
-test("deriveGatesFromSettings, run against this repo's real .claude/settings.json, finds the named merge-gate hooks", () => {
+test("deriveGatesFromSettings plus deriveGatesFromDispatcher, run against this repo, finds the named merge-gate hooks", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const settingsPath = join(here, "..", "..", "..", ".claude", "settings.json");
+  const dispatcherPath = join(here, "..", "..", "..", ".claude", "hooks", "dispatch-bash.sh");
   const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as RawSettings;
-  const gates = deriveGatesFromSettings(raw);
+  const gates = [
+    ...deriveGatesFromSettings(raw),
+    ...deriveGatesFromDispatcher(readFileSync(dispatcherPath, "utf-8")),
+  ];
   const names = gates.map((g) => g.name);
 
   for (const expected of [
@@ -212,9 +237,8 @@ test("deriveGatesFromSettings, run against this repo's real .claude/settings.jso
     "require-active-ticket",
     "require-migration-ticket",
     "block-private-refs-in-public-repos",
-    "suggest-mcp-search",
   ]) {
-    assert.ok(names.includes(expected), `expected "${expected}" to be derived from the real settings.json`);
+    assert.ok(names.includes(expected), `expected "${expected}" to be derived from settings.json or dispatch-bash.sh`);
   }
 });
 

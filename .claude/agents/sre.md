@@ -2,7 +2,7 @@
 name: sre
 description: Ensures systems are reliable, observable, and resilient — applies engineering to operational problems. Activates on production incidents, SLO breaches, monitoring / alerting work, or on-call rotation.
 model: opus
-allowed-tools: Bash, Read, Edit, Write, Grep, Glob, mcp__apexyard-search__search_code, mcp__apexyard-search__search_docs
+allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 persona_name: Saif
 ---
 
@@ -10,9 +10,17 @@ persona_name: Saif
 
 Read and adopt `@roles/engineering/sre.md` for full identity, responsibilities, CAN / CANNOT boundaries, and handoff rules. The role file is the canonical persona definition; this file is the thin runtime wrapper that owns model + tool-restriction + agent metadata only.
 
-## MCP-first code search
+## Writing standard
 
-When reading a managed-project codebase (e.g. tracing an incident through service code), **prefer `mcp__apexyard-search__search_code` (and `search_docs` for docs) over `grep` + `Read`** — it's semantic, returns targeted excerpts, and costs ~3–5× fewer tokens. Fall back to `grep`/`Read` only when an MCP query returns nothing relevant (e.g. the project isn't indexed). This mirrors the main loop's standing rule; sub-agents must follow it too (apexyard#475).
+Before you write a durable artifact, read `.claude/rules/writing-standard.md`.
+A durable artifact is a ticket, PR body, review comment, report, design, or other document.
+Use the controlled technical writing profile in that rule.
+The rule does not apply to chat replies.
+
+## Code search
+
+Use `grep` and `Read` when you read a managed-project codebase.
+Do the complete read. Do not skip or shorten the step.
 
 ## Activation context
 

@@ -18,6 +18,7 @@ import test from "node:test";
 import {
   buildToolInput,
   claudeToolNameFor,
+  deriveGatesFromDispatcher,
   deriveGatesFromSettings,
   extractCommandGlob,
   extractHookRelativePath,
@@ -195,8 +196,8 @@ test("findUnsupportedGateWires: a gate wired only to bash/edit/write reports not
 test("findUnsupportedGateWires: a gate wired to read/glob/grep is reported, once per tool", () => {
   const gates: GateDefinition[] = [
     {
-      name: "suggest-mcp-search",
-      hookRelativePath: ".claude/hooks/suggest-mcp-search.sh",
+      name: "example-advisory",
+      hookRelativePath: ".claude/hooks/example-advisory.sh",
       wires: [
         { tool: "bash", commandGlob: "grep *" },
         { tool: "read", commandGlob: null },
@@ -210,18 +211,19 @@ test("findUnsupportedGateWires: a gate wired to read/glob/grep is reported, once
     found.map((f) => f.tool).sort(),
     ["glob", "grep", "read"],
   );
-  assert.ok(found.every((f) => f.gateName === "suggest-mcp-search"));
+  assert.ok(found.every((f) => f.gateName === "example-advisory"));
 });
 
-test("findUnsupportedGateWires, run against this repo's real .claude/settings.json, flags suggest-mcp-search.sh's Read/Glob/Grep wiring", () => {
+test("findUnsupportedGateWires, run against this repo's real .claude/settings.json, finds no unsupported wire", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const settingsPath = join(here, "..", "..", "..", ".claude", "settings.json");
   const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as RawSettings;
-  const gates = deriveGatesFromSettings(raw);
-  const found = findUnsupportedGateWires(gates);
-  assert.ok(
-    found.some((f) => f.gateName === "suggest-mcp-search" && f.tool === "read"),
-    "the real settings.json wires suggest-mcp-search.sh to Read|Glob|Grep — this must surface as an unsupported wire, not silently vanish",
+  const dispatcherPath = join(here, "..", "..", "..", ".claude", "hooks", "dispatch-bash.sh");
+  const gates = [...deriveGatesFromSettings(raw), ...deriveGatesFromDispatcher(readFileSync(dispatcherPath, "utf-8"))];
+  assert.deepEqual(
+    findUnsupportedGateWires(gates),
+    [],
+    "no hook is wired to Read|Glob|Grep today — a new one must surface here as an unsupported wire",
   );
 });
 
@@ -253,7 +255,8 @@ test("deriveGatesFromSettings, run against this repo's real .claude/settings.jso
   const here = dirname(fileURLToPath(import.meta.url));
   const settingsPath = join(here, "..", "..", "..", ".claude", "settings.json");
   const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as RawSettings;
-  const gates = deriveGatesFromSettings(raw);
+  const dispatcherPath = join(here, "..", "..", "..", ".claude", "hooks", "dispatch-bash.sh");
+  const gates = [...deriveGatesFromSettings(raw), ...deriveGatesFromDispatcher(readFileSync(dispatcherPath, "utf-8"))];
   const names = gates.map((g) => g.name);
 
   for (const expected of [
@@ -281,7 +284,8 @@ test("deriveGatesFromSettings, run against this repo's real .claude/settings.jso
   const here = dirname(fileURLToPath(import.meta.url));
   const settingsPath = join(here, "..", "..", "..", ".claude", "settings.json");
   const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as RawSettings;
-  const gates = deriveGatesFromSettings(raw);
+  const dispatcherPath = join(here, "..", "..", "..", ".claude", "hooks", "dispatch-bash.sh");
+  const gates = [...deriveGatesFromSettings(raw), ...deriveGatesFromDispatcher(readFileSync(dispatcherPath, "utf-8"))];
   const mergeGate = gates.find((g) => g.name === "block-unreviewed-merge")!;
   const globs = mergeGate.wires.filter((w) => w.tool === "bash").map((w) => w.commandGlob);
   for (const expected of ["gh pr merge *", "gh api *", "glab mr merge *", "glab api *", "tracker_pr_merge *"]) {
