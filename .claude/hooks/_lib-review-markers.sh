@@ -30,6 +30,19 @@
 #       Returns the absolute path to the reviews directory:
 #       <marker_home>/.claude/session/reviews
 #
+#   review_validate_rex_body <body_file>
+#       Exit 0 when the Rex review body has the required Output Format
+#       headings. Exit 1 otherwise. Does not write a marker.
+#
+#   review_validate_body <rex|tariq|pr|agdr> <body_file> [pr_sections]
+#       Check the selected artifact profile. On failure,
+#       REVIEW_VALIDATION_MISSING lists missing PR requirements.
+#
+#   review_write_rex_approved <body_file> <sha> <marker_path>
+#       Validate the body, require a **APPROVED** verdict line and a
+#       matching Reviewed commit footer SHA, then write the bare SHA
+#       plus newline. See AgDR-0161 / me2resh/apexyard#1322.
+#
 # USAGE (in a hook or skill)
 # --------------------------
 #   . "$(dirname "$0")/_lib-review-markers.sh"
@@ -87,6 +100,62 @@ review_marker_path() {
   reviews_dir=$(review_markers_dir "$marker_home")
 
   printf '%s/%s__%s-%s.approved' "$reviews_dir" "$safe_repo" "$pr" "$role"
+}
+
+# ---------------------------------------------------------------------------
+# ACTIVE-REVIEWER MARKER PATH — session-scoped (me2resh/apexyard#1376)
+# ---------------------------------------------------------------------------
+#
+# Before this fix, .claude/session/active-reviewer was ONE fixed path shared
+# by every Claude Code session and worktree on the same ops fork. A review
+# running in session B set that one file, and block-reviewer-repo-mutation.sh
+# read it from EVERY session — so session A's unrelated `git commit` was
+# blocked by a review it had no part in. Two concurrent reviews (different
+# sessions) also overwrote each other's marker, and the first to finish
+# deleted the file out from under the other's still-running review.
+#
+# active_reviewer_marker_path scopes the marker filename to the session that
+# wrote it, so a review in one session can be read only by hooks running in
+# that SAME session — never granting, and never blocking, mutations in any
+# other session.
+#
+# active_reviewer_marker_path [marker_home] [session_id]
+#
+# Args:
+#   marker_home — the ops-fork root (or "." when unresolved). Defaults to ".".
+#   session_id  — defaults to $CLAUDE_CODE_SESSION_ID. When both this arg and
+#                 the env var are empty, the function falls back to the
+#                 pre-#1376 FIXED path (no session suffix). This is the safe
+#                 fallback for callers that legitimately have no Claude Code
+#                 session at all — a standalone git-native hook, CI, or a
+#                 bare test-harness invocation. This function makes no claim
+#                 about how many such processes act on a given ops fork at
+#                 once; the fixed path is exactly as safe (or unsafe) as it
+#                 was before this function existed, and every caller that
+#                 never set the env var (the pre-#1376 test suite included)
+#                 keeps working unchanged.
+#
+# Output (stdout): the absolute marker path.
+active_reviewer_marker_path() {
+  local marker_home="${1:-.}"
+  local sid="${2:-${CLAUDE_CODE_SESSION_ID:-}}"
+  local base="${marker_home}/.claude/session/active-reviewer"
+
+  if [ -z "$sid" ]; then
+    printf '%s' "$base"
+    return 0
+  fi
+
+  # Sanitise: a session id is expected to already be a safe token (the
+  # harness's own id), but never trust it as a bare path component. Collapse
+  # anything outside [A-Za-z0-9._-] to '_' so the result can never contain a
+  # '/' (or other separator) and escape the .claude/session/ directory this
+  # marker lives in (NOT the .claude/session/reviews/ directory — the
+  # active-reviewer marker and the *.approved review markers are siblings,
+  # not the same directory).
+  local safe_sid
+  safe_sid=$(printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '_')
+  printf '%s.%s' "$base" "$safe_sid"
 }
 
 # pr_base_repo <pr> <repo>
@@ -290,4 +359,179 @@ Delete it and re-run the real review, passing NO marker path:
   rm ${near_miss}
   ${skill} ${pr}
 HINT
+}
+
+# Required Rex Output Format headings (me2resh/apexyard#1322, AgDR-0161).
+# Matched as start-of-line prefixes so `## Code Review: PR #N` still counts.
+_REVIEW_REX_BODY_HEADINGS='## Code Review
+### Summary
+### Checklist Results
+### Issues Found
+### Validation
+### Verdict'
+
+_REVIEW_TARIQ_BODY_HEADINGS='## Design Review
+### Summary
+### Review Lens Results
+### Blocking Findings
+### Suggestions
+### Verdict'
+
+_REVIEW_AGDR_HEADINGS='## Context
+## Options Considered
+## Decision
+## Consequences
+## Artifacts'
+
+# review_validate_body <profile> <body_file> [pr_sections]
+# The same local, read-only validator serves review, PR, and AgDR bodies.
+# It checks required structure and reference evidence, not prose quality.
+review_validate_body() {
+  local profile="${1:-}" body_file="${2:-}" pr_sections="${3:-}"
+  local headings="" heading section section_re
+  REVIEW_VALIDATION_MISSING=""
+  REVIEW_VALIDATION_RESULT="incomplete"
+
+  case "$profile" in
+    rex) headings="$_REVIEW_REX_BODY_HEADINGS" ;;
+    tariq) headings="$_REVIEW_TARIQ_BODY_HEADINGS" ;;
+    agdr) headings="$_REVIEW_AGDR_HEADINGS" ;;
+    pr) ;;
+    *) echo "review_validate_body: unknown profile: $profile" >&2; return 1 ;;
+  esac
+  if [ -z "$body_file" ] || [ ! -f "$body_file" ]; then
+    echo "review_validate_body: body file missing" >&2
+    return 1
+  fi
+  if [ ! -s "$body_file" ]; then
+    if [ "$profile" = pr ]; then
+      REVIEW_VALIDATION_MISSING="Summary
+Testing
+Glossary
+Closes or Refs line
+"
+    fi
+    echo "review_validate_body: body is empty" >&2
+    return 1
+  fi
+
+  if [ "$profile" = pr ]; then
+    # Config may add sections. These four requirements are fixed for PRs.
+    while IFS= read -r section; do
+      [ -z "$section" ] && continue
+      case "
+$REVIEW_VALIDATION_MISSING
+" in *"
+$section
+"*) continue ;; esac
+      section_re=$(printf '%s' "$section" | sed 's/[][\.^$*+?(){}|]/\\&/g')
+      # Optional trailing colon: "## Testing:" is the same heading as "## Testing".
+      if ! grep -qiE "^##[[:space:]]+${section_re}:?([[:space:]]|$)" "$body_file"; then
+        REVIEW_VALIDATION_MISSING="${REVIEW_VALIDATION_MISSING}${section}
+"
+      fi
+    done <<EOF
+${pr_sections}
+Summary
+Testing
+Glossary
+EOF
+    # Hash refs accept optional owner/repo (each [A-Za-z0-9._-]+) before #N.
+    # Tracker keys (ABC-12) stay unscoped. Only Closes and Refs count — not
+    # Fixes/Resolves — so the required line is the explicit ticket link, not
+    # every GitHub auto-close keyword.
+    if ! grep -qiE '^[[:space:]]*(Closes|Refs)[[:space:]]+(([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)?#[0-9]+|[A-Z]{2,10}-[0-9]+)([[:space:][:punct:]]|$)' "$body_file"; then
+      REVIEW_VALIDATION_MISSING="${REVIEW_VALIDATION_MISSING}Closes or Refs line
+"
+    fi
+    if [ -n "$REVIEW_VALIDATION_MISSING" ]; then
+      echo "review_validate_body: incomplete PR body" >&2
+      return 1
+    fi
+  else
+    while IFS= read -r heading; do
+      [ -z "$heading" ] && continue
+      if ! grep -qE "^${heading}([[:space:]:]|$)" "$body_file"; then
+        echo "review_validate_body: missing heading: ${heading}" >&2
+        return 1
+      fi
+    done <<EOF
+${headings}
+EOF
+    if [ "$profile" = agdr ]; then
+      if ! grep -qE '^# [^[:space:]]' "$body_file"; then
+        echo "review_validate_body: missing AgDR title" >&2
+        return 1
+      fi
+    elif ! grep -q 'Reviewed commit' "$body_file"; then
+      echo "review_validate_body: missing Reviewed commit footer" >&2
+      return 1
+    fi
+  fi
+  # The sourcing caller reads this result after the function returns.
+  # shellcheck disable=SC2034
+  REVIEW_VALIDATION_RESULT="complete"
+  return 0
+}
+
+# review_validate_rex_body <body_file>
+#
+# Exit 0 when the file is non-empty and contains every required heading
+# plus a Reviewed commit footer. Exit 1 with a stderr reason otherwise.
+# Does not inspect the host review. Does not write a marker.
+review_validate_rex_body() {
+  review_validate_body rex "${1:-}"
+}
+
+# _review_rex_verdict_block <body_file>
+# Print lines after ### Verdict until the next ### heading, a --- rule, or EOF.
+_review_rex_verdict_block() {
+  awk '
+    /^### Verdict([[:space:]]|$)/ { p=1; next }
+    p && /^### / { exit }
+    p && /^---[[:space:]]*$/ { exit }
+    p { print }
+  ' "$1"
+}
+
+# review_write_rex_approved <body_file> <sha> <marker_path>
+#
+# Validate the local body. Refuse a verdict that is not **APPROVED**.
+# Refuse a footer SHA that does not match. Then write the bare 40-char
+# SHA plus newline. The merge gate still reads only that SHA.
+review_write_rex_approved() {
+  local body_file="${1:-}"
+  local sha="${2:-}"
+  local marker_path="${3:-}"
+
+  if [ -z "$body_file" ] || [ -z "$sha" ] || [ -z "$marker_path" ]; then
+    echo "review_write_rex_approved: need <body_file> <sha> <marker_path>" >&2
+    return 1
+  fi
+  if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
+    echo "review_write_rex_approved: sha must be 40 lowercase hex chars" >&2
+    return 1
+  fi
+
+  review_validate_rex_body "$body_file" || return 1
+
+  if ! grep -F "Reviewed commit" "$body_file" | grep -Fq "$sha"; then
+    echo "review_write_rex_approved: Reviewed commit footer does not match sha" >&2
+    return 1
+  fi
+
+  local verdict
+  verdict=$(_review_rex_verdict_block "$body_file")
+  if echo "$verdict" | grep -q 'CHANGES REQUESTED'; then
+    echo "review_write_rex_approved: CHANGES REQUESTED must not write a marker" >&2
+    return 1
+  fi
+  # Exact bold token only. A substring match would accept "NOT APPROVED".
+  if ! echo "$verdict" | grep -qE '^\*\*APPROVED\*\*[[:space:]]*$'; then
+    echo "review_write_rex_approved: verdict is not **APPROVED**" >&2
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$marker_path")"
+  printf '%s\n' "$sha" > "$marker_path"
 }

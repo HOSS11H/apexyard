@@ -136,39 +136,29 @@ fi
 # cwd-relative git call below must run against the COMMIT's directory, not
 # wherever this script happened to start.
 #
-# Priority (highest first) — corrected per PR #1073 review. The harness
-# `.cwd` field is STRUCTURED: the harness itself sets it for this exact Bash
-# call, and it cannot be influenced by anything the commit message says.
-# Everything else is SCRAPED out of $COMMAND text, which can be tricked by
-# the commit message's own prose, or by an unrelated LATER git invocation in
-# the same compound command. Structured beats scraped, so `.cwd` goes first
-# — this now correctly mirrors suggest-mcp-reindex-after-pull.sh (see its
-# cwd-first fallback chain around lines 109-138: `.cwd` is "the common
-# case", checked FIRST, with command-parsing only as a fallback). An earlier
-# version of this fix put the scraped `-C`/`cd` parsing AHEAD of `.cwd` and
-# justified it as "an explicit in-command override always wins" — that
-# ordering is exactly what made these reachable:
-#   - a commit MESSAGE containing the text `git -C <dir>` got scraped as
-#     real shell syntax, silently disabling ref verification (if <dir>
-#     isn't a git repo) or validating a real ref against the wrong repo (if
-#     it is)
-#   - `git commit -m "..." && git -C /other log` — a `-C` belonging to a
-#     LATER, unrelated git invocation got treated as though it governed
-#     this commit
-#   - `cd /real && git -C /other status && git commit` — same shape,
-#     discarding the real governing `cd /real`
-#   - a relative `cd ../sibling` resolved against the HOOK's OWN cwd — the
-#     very cwd this fix exists to distrust
+# Priority (highest first) — me2resh/apexyard#1340 / AgDR-0163. PR #1073
+# ranked harness `.cwd` above a this-commit `-C` because scrape hijacks were
+# still open. Those hijacks now have separate mitigations (message strip,
+# `-C` bound to THIS `commit` token, absolute paths only). An explicit
+# `git -C <path> commit` names the repository the commit writes. The
+# harness `.cwd` is the session directory. Ranking `.cwd` first made the
+# `-C` parser unreachable in Claude Code and Cursor, where `.cwd` is always
+# set and absolute. That is #1050 recurring.
+#
+# The scrape is still constrained:
+#   - a commit MESSAGE containing `git -C <dir>` is stripped before scan
+#   - `git commit -m "..." && git -C /other log` does not bind `/other`
+#   - `cd /real && git -C /other status && git commit` keeps `/real`
+#   - a relative `cd ../sibling` is not trusted
 #
 # Priority now:
-#   1. the harness-provided `.cwd` (`.tool_input.cwd`) for this Bash call.
-#   2. `git -C <path>` bound DIRECTLY to this commit invocation
+#   1. `git -C <path>` bound DIRECTLY to this commit invocation
 #      (`git -C <path> commit`), scraped from the command with the commit
-#      MESSAGE stripped out first (so prose can never be read as syntax),
-#      and matched only when the `-C` is the last thing before THIS
-#      `commit` token — a `-C` on a different git invocation cannot bind.
-#   3. the LAST `cd <path>` occurring before this commit invocation, same
+#      MESSAGE stripped out first, and matched only when the `-C` is the
+#      last thing before THIS `commit` token.
+#   2. the LAST `cd <path>` occurring before this commit invocation, same
 #      message-stripped, same-invocation-only scoping.
+#   3. the harness-provided `.cwd` (`.tool_input.cwd`) for this Bash call.
 #   4. fall back to the hook's own process cwd — IDENTICAL to the pre-fix
 #      behavior, so a session with no worktree involved sees no change.
 # Only ABSOLUTE paths are trusted out of (1)-(3); a relative path is
@@ -284,7 +274,8 @@ resolve_commit_workdir_from_command() {
 PAYLOAD_CWD=$(echo "$INPUT" | jq -r '.cwd // .tool_input.cwd // empty' 2>/dev/null)
 CMD_SANS_MSG=$(strip_message_from_command "$COMMAND" "$MSG")
 
-# 1. Structured harness cwd wins outright when present and absolute.
+# 1 & 2. This-commit `-C` / `cd` scrape first (AgDR-0163). An explicit
+# `git -C <path> commit` outranks the ambient harness cwd.
 # WORKDIR_SOURCE distinguishes "we resolved a hint" from "nothing resolved
 # and we fell back" — used below to give the "could not resolve tracker
 # repo" warning a sharper message when a HINT was found but didn't pan out
@@ -292,17 +283,13 @@ CMD_SANS_MSG=$(strip_message_from_command "$COMMAND" "$MSG")
 # unremarkable case where no hint existed and the fallback is expected.
 WORKDIR=""
 WORKDIR_SOURCE="fallback"
-if [ -n "$PAYLOAD_CWD" ] && [ "${PAYLOAD_CWD#/}" != "$PAYLOAD_CWD" ]; then
+WORKDIR=$(resolve_commit_workdir_from_command "$CMD_SANS_MSG")
+if [ -n "$WORKDIR" ]; then
+  WORKDIR_SOURCE="scraped_command"
+elif [ -n "$PAYLOAD_CWD" ] && [ "${PAYLOAD_CWD#/}" != "$PAYLOAD_CWD" ]; then
+  # 3. Harness `.cwd` when the scrape found no this-commit path.
   WORKDIR="$PAYLOAD_CWD"
   WORKDIR_SOURCE="payload_cwd"
-fi
-# 2 & 3. Only reached when .cwd is absent — scraped, message-stripped,
-# same-invocation-only command parsing.
-if [ -z "$WORKDIR" ]; then
-  WORKDIR=$(resolve_commit_workdir_from_command "$CMD_SANS_MSG")
-  if [ -n "$WORKDIR" ]; then
-    WORKDIR_SOURCE="scraped_command"
-  fi
 fi
 # 4. No hint resolved anything usable — fall back to this process's own cwd,
 # exactly what every git call below did before this fix.
@@ -424,13 +411,34 @@ fi
 MISSING=""
 CLOSED=""
 SHAPE_ONLY=""
+# Capture the tracker CLI's own stderr instead of discarding it, so the paths
+# below that block or warn can name the real cause (#1336). A ref that resolves
+# on the upstream fallback (#207) never records anything, so the ordinary
+# fork-to-upstream case stays silent.
+#
+# The snapshot matters: `2>` truncates on open, so a later ref's lookup — even a
+# successful one that writes nothing — would otherwise wipe the error belonging
+# to the ref that actually went missing. Copy the text out at the moment a ref
+# fails, and report that.
+# Redirect to /dev/null when mktemp fails, rather than to an empty path, which
+# bash reports as an ambiguous redirect on every lookup. The trap is set ONLY
+# when mktemp succeeded: an unconditional trap would run `rm -f /dev/null`,
+# which under root removes the device node and turns every later redirect to
+# /dev/null on that host into a regular file.
+if TRACKER_ERR=$(mktemp); then
+  trap 'rm -f "$TRACKER_ERR"' EXIT
+else
+  TRACKER_ERR=/dev/null
+fi
+TRACKER_ERR_TEXT=""
+
 for REF in $REFS; do
   NUM=$(echo "$REF" | tr -d '#')
   # Dispatch via the tracker lib. For non-gh kinds `--repo` may be a no-op.
-  ISSUE_JSON=$(tracker_view "$NUM" "$TRACKER_REPO" 2>/dev/null)
+  ISSUE_JSON=$(tracker_view "$NUM" "$TRACKER_REPO" 2>"$TRACKER_ERR")
   # Short-circuit: only consult upstream when the primary tracker missed.
   if [ -z "$ISSUE_JSON" ] && [ -n "$UPSTREAM_REPO" ]; then
-    ISSUE_JSON=$(tracker_view "$NUM" "$UPSTREAM_REPO" 2>/dev/null)
+    ISSUE_JSON=$(tracker_view "$NUM" "$UPSTREAM_REPO" 2>"$TRACKER_ERR")
   fi
   if [ -z "$ISSUE_JSON" ] && [ "$TRACKER_KIND" != "gh" ]; then
     # Non-gh tracker (Linear / Jira / Asana / custom) returned nothing — the
@@ -440,10 +448,12 @@ for REF in $REFS; do
     # Hard existence enforcement (adding to MISSING → exit 2) is retained ONLY
     # for tracker.kind == gh.
     SHAPE_ONLY="${SHAPE_ONLY}${REF} "
+    [ -s "$TRACKER_ERR" ] && TRACKER_ERR_TEXT=$(cat "$TRACKER_ERR")
     continue
   fi
   if [ -z "$ISSUE_JSON" ]; then
     MISSING="${MISSING}${REF} "
+    [ -s "$TRACKER_ERR" ] && TRACKER_ERR_TEXT=$(cat "$TRACKER_ERR")
     continue
   fi
   ISSUE_STATE=$(echo "$ISSUE_JSON" | jq -r '.state // empty' 2>/dev/null)
@@ -480,11 +490,19 @@ and use the returned number in your commit message.
 If the reference is truly informational (cross-repo link that can't be verified
 with \`gh issue view\`), write it as a plain URL instead of #N notation.
 MSG
+  if [ -n "$TRACKER_ERR_TEXT" ]; then
+    echo "Tracker CLI said:" >&2
+    printf '%s\n' "$TRACKER_ERR_TEXT" | sed 's/^/  /' >&2
+  fi
   exit 2
 fi
 
 if [ -n "$SHAPE_ONLY" ]; then
   echo "WARN: verify-commit-refs.sh: tracker '${TRACKER_KIND}' not queryable here — ${SHAPE_ONLY}accepted on shape only (no existence check). See #501." >&2
+  if [ -n "$TRACKER_ERR_TEXT" ]; then
+    echo "Tracker CLI said:" >&2
+    printf '%s\n' "$TRACKER_ERR_TEXT" | sed 's/^/  /' >&2
+  fi
 fi
 
 if [ -n "$CLOSED" ]; then

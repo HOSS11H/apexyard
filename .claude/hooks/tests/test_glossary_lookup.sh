@@ -13,7 +13,7 @@
 #
 #   1. .claude/rules/glossary-lookup.md exists and carries the ApexYard
 #      footer.
-#   2. CLAUDE.md imports it via @.claude/rules/glossary-lookup.md.
+#   2. CLAUDE.md indexes it by name at .claude/rules/glossary-lookup.md.
 #   3. CLAUDE.md's rules-count line reads >= 18 and names "glossary lookup".
 #   4. The rule points at the shared glossary asset it reads from
 #      (docs/onboarding/glossary.md), so it can't drift onto a stale path.
@@ -22,6 +22,11 @@
 # — bash + grep, no framework.
 
 set -u
+
+# Isolate from live Claude Code session pin/cache (me2resh/apexyard#1549).
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/_test-session-isolation.sh"
+
 
 SRC_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 RULE="$SRC_ROOT/.claude/rules/glossary-lookup.md"
@@ -44,11 +49,12 @@ else
   die "rule file missing the ApexYard footer"
 fi
 
-# 2. CLAUDE.md imports the rule
-if grep -q '@.claude/rules/glossary-lookup.md' "$CLAUDE_MD" 2>/dev/null; then
-  pass "CLAUDE.md imports glossary-lookup.md"
+# 2. CLAUDE.md indexes the rule by name (no @ import — AgDR-0160)
+if grep -qF '.claude/rules/glossary-lookup.md' "$CLAUDE_MD" 2>/dev/null && \
+   ! grep -qF '@.claude/rules/glossary-lookup.md' "$CLAUDE_MD" 2>/dev/null; then
+  pass "CLAUDE.md indexes glossary-lookup.md"
 else
-  die "CLAUDE.md does not import @.claude/rules/glossary-lookup.md"
+  die "CLAUDE.md does not index .claude/rules/glossary-lookup.md without an @ import"
 fi
 
 # 3. CLAUDE.md rules-count line is present and at least 18 (>= the count as

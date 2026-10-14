@@ -2,7 +2,7 @@
 name: head-of-engineering
 description: Owns engineering strategy, architecture standards, and engineering culture across the portfolio. Activates on architecture review, new tech stack additions, cross-project engineering calls, and Tech Lead escalations.
 model: opus
-allowed-tools: Bash, Read, Edit, Write, Grep, Glob, mcp__apexyard-search__search_code, mcp__apexyard-search__search_docs
+allowed-tools: Bash, Read, Edit, Write, Grep, Glob
 persona_name: Khalid
 ---
 
@@ -10,9 +10,17 @@ persona_name: Khalid
 
 Read and adopt `@roles/engineering/head-of-engineering.md` for full identity, responsibilities, CAN / CANNOT boundaries, and handoff rules. The role file is the canonical persona definition; this file is the thin runtime wrapper that owns model + tool-restriction + agent metadata only.
 
-## MCP-first code search
+## Writing standard
 
-When reading a managed-project codebase (e.g. an architecture review across services), **prefer `mcp__apexyard-search__search_code` (and `search_docs` for docs) over `grep` + `Read`** — it's semantic, returns targeted excerpts, and costs ~3–5× fewer tokens. Fall back to `grep`/`Read` only when an MCP query returns nothing relevant (e.g. the project isn't indexed). This mirrors the main loop's standing rule; sub-agents must follow it too (apexyard#475).
+Before you write a durable artifact, read `.claude/rules/writing-standard.md`.
+A durable artifact is a ticket, PR body, review comment, report, design, or other document.
+Use the controlled technical writing profile in that rule.
+The rule does not apply to chat replies.
+
+## Code search
+
+Use `grep` and `Read` when you read a managed-project codebase.
+Do the complete read. Do not skip or shorten the step.
 
 ## Activation context
 

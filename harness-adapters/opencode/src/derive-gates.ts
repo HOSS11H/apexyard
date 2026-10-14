@@ -32,7 +32,7 @@
  * derives the FULL set of `PreToolUse` hooks wired for `Bash` / `Edit` /
  * `Write` / `MultiEdit` / `Read` / `Glob` / `Grep` matchers — not a curated
  * subset. Advisory-only hooks (ones that never exit 2, e.g.
- * `detect-role-trigger.sh`, `suggest-mcp-search.sh`) are harmless to
+ * `detect-role-trigger.sh`) are harmless to
  * include: they run, they never throw, they cost one subprocess spawn per
  * matching tool call. Gate correctness does not depend on us knowing in
  * advance which hooks are blocking and which are advisory — the dispatcher
@@ -69,6 +69,7 @@
 
 import {
   deriveGatesFromSettings as deriveCoreGates,
+  deriveGatesFromDispatcher as deriveCoreDispatcherGates,
   extractCommandGlob,
   extractHookRelativePath,
   gateMatchesClaudeMatcher,
@@ -191,6 +192,20 @@ export function deriveGatesFromSettings(settings: RawSettings): GateDefinition[]
   return translated;
 }
 
+/** Translates the dispatcher's Bash routing table into opencode gate wires. */
+export function deriveGatesFromDispatcher(source: string): GateDefinition[] {
+  const coreGates = deriveCoreDispatcherGates(source);
+  const translated: GateDefinition[] = [];
+  for (const coreGate of coreGates) {
+    const wires = coreGate.wires.flatMap((wire) => {
+      const tool = CLAUDE_MATCHER_TO_OPENCODE_TOOL[wire.claudeMatcher];
+      return tool ? [{ tool, commandGlob: wire.commandGlob }] : [];
+    });
+    if (wires.length > 0) translated.push({ name: coreGate.name, hookRelativePath: coreGate.hookRelativePath, wires });
+  }
+  return translated;
+}
+
 /**
  * True if `gate` should fire for a tool call on `toolId` with the given
  * (optional — only bash calls carry one) `command` string. A gate with an
@@ -272,9 +287,8 @@ export interface UnsupportedGateWire {
  * WHY THIS EXISTS
  * -----------------
  * `deriveGatesFromSettings` derives gates for every `PreToolUse` matcher
- * `.claude/settings.json` wires, including `Read|Glob|Grep` (today, exactly
- * one hook: `suggest-mcp-search.sh`, an advisory-only hook that never exits
- * 2 for those tool types — see its own header comment). `buildToolInput`,
+ * `.claude/settings.json` wires, including `Read|Glob|Grep` (no hook is
+ * wired to those matchers today). `buildToolInput`,
  * by contrast, only reconstructs stdin for `bash`/`edit`/`write` — Hakim's
  * #839 finding (ported to this adapter as #840 C2) is that a FUTURE
  * blocking gate wired to `Read`/`Glob`/`Grep` would be silently skipped at
