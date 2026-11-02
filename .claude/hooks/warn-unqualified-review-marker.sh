@@ -107,7 +107,8 @@ if [ -z "$ROOT" ]; then
       ROOT="$cur"
       break
     fi
-    cur=$(dirname "$cur")
+    # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+    parent=$(dirname "$cur"); [ "$parent" = "$cur" ] && break; cur="$parent"
   done
 fi
 [ -n "$ROOT" ] || exit 0

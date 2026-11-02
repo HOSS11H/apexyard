@@ -221,7 +221,7 @@ _ratc_in_temp_dir() {
 # links. Still inspect every component beneath that root, including the final
 # entry. Outside a temp root, inspect the whole path.
 _ratc_path_has_symlink_component() {
-  local path="$1" probe="$1" root="/" candidate physical
+  local path="$1" probe="$1" root="/" candidate physical parent
   for candidate in /tmp /var/tmp "${TMPDIR:-}"; do
     [ -n "$candidate" ] && [ -d "$candidate" ] || continue
     candidate="${candidate%/}"
@@ -248,7 +248,13 @@ _ratc_path_has_symlink_component() {
       */) probe="${probe%/}"; continue ;;
     esac
     [ -L "$probe" ] && return 0
-    probe="$(dirname "$probe")"
+    # Git for Windows dirname treats `\` as a separator and returns some
+    # paths unchanged: `dirname '/\'` is `/\` and `dirname 'C:'` is `C:`.
+    # Such a path is the top of its own chain and was checked just above,
+    # so stop here as at `/`. Without this stop the loop never ends.
+    parent="$(dirname "$probe")"
+    [ "$parent" = "$probe" ] && break
+    probe="$parent"
   done
   return 1
 }
