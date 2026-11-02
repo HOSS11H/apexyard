@@ -37,7 +37,7 @@
 # ~/link-into-repo → the ops fork) would compare as "outside" the repo
 # under a naive string-prefix check, silently bypassing the gate.
 _resolve_real_path() {
-  local p="$1" dir tail=""
+  local p="$1" dir tail="" up
   [ -n "$p" ] || return 0
   dir="$p"
   while [ -n "$dir" ] && [ "$dir" != "/" ] && [ ! -e "$dir" ]; do
@@ -46,7 +46,8 @@ _resolve_real_path() {
     else
       tail="$(basename "$dir")/$tail"
     fi
-    dir="$(dirname "$dir")"
+    # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+    up="$(dirname "$dir")"; [ "$up" = "$dir" ] && break; dir="$up"
   done
   if [ ! -e "$dir" ]; then
     return 0

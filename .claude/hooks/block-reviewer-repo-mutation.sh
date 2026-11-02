@@ -73,7 +73,7 @@ _brrm_worktree_add_path_arg() {
 
 # Physical path for ABS, whose tail may not exist yet. Empty on failure.
 _brrm_real_path() {
-  local abs="$1" dir tail="" parent
+  local abs="$1" dir tail="" parent up
   if command -v _resolve_real_path >/dev/null 2>&1; then
     _resolve_real_path "$abs"
     return
@@ -81,7 +81,8 @@ _brrm_real_path() {
   dir="$abs"
   while [ -n "$dir" ] && [ "$dir" != / ] && [ ! -d "$dir" ]; do
     if [ -z "$tail" ]; then tail=$(basename "$dir"); else tail=$(basename "$dir")/$tail; fi
-    dir=$(dirname "$dir")
+    # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+    up=$(dirname "$dir"); [ "$up" = "$dir" ] && break; dir="$up"
   done
   parent=$(cd "$dir" 2>/dev/null && pwd -P) || return 0
   if [ "$parent" = / ]; then printf '/%s' "$tail"; else printf '%s/%s' "$parent" "${tail:+$tail}"; fi
@@ -159,7 +160,10 @@ _brrm_check_worktree_add_segment() {
   # dirname on it would climb lexically into the wrong directory.
   local anc="$resolved" govs parent
   govs=$(_brrm_governed_roots "$root")
-  while [ -n "$anc" ] && [ "$anc" != / ] && [ ! -e "$anc" ]; do anc=$(dirname "$anc"); done
+  # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+  while [ -n "$anc" ] && [ "$anc" != / ] && [ ! -e "$anc" ]; do
+    parent=$(dirname "$anc"); [ "$parent" = "$anc" ] && break; anc="$parent"
+  done
   while [ -n "$anc" ]; do
     while IFS= read -r gov; do
       [ -n "$gov" ] && [ -e "$gov" ] || continue

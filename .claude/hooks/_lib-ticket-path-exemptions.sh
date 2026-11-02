@@ -16,9 +16,10 @@
 
 # Nearest existing ancestor of a path (handles not-yet-created files).
 _ticket_path_existing_dir() {
-  local dir="$1"
+  local dir="$1" up
   while [ -n "$dir" ] && [ "$dir" != "/" ] && [ ! -d "$dir" ]; do
-    dir=$(dirname "$dir")
+    # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+    up=$(dirname "$dir"); [ "$up" = "$dir" ] && break; dir="$up"
   done
   [ -d "$dir" ] && printf '%s' "$dir"
 }

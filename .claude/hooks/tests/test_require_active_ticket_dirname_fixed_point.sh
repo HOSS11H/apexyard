@@ -12,8 +12,11 @@
 # A PATH shim makes dirname behave like Git for Windows on every OS, so these
 # cases fail on Linux and macOS without the fix, not only on Windows.
 #
-# Each case asserts that the hook finishes before a deadline, and that its
-# verdict matches the verdict under the platform's own dirname.
+# Each case asserts that the hook finishes before a deadline and returns a
+# gate verdict: a pass (0) or a block (2) that says BLOCKED. The verdict may
+# differ between the two dirname runs. On a POSIX file system the shim's `/\`
+# is a missing file, not a root, so the path resolver fails closed and the
+# gate can block where Windows passes. Blocking is the safe direction.
 #
 # Exit 0 if all cases pass; 1 otherwise.
 
@@ -130,28 +133,42 @@ run_gate() {
   GATE_RC=$?
 }
 
+fail_case() {
+  echo "FAIL [$1]: $2" >&2
+  FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}$1 "
+}
+
+# check_verdict LABEL HOW SANDBOX — return 0 when GATE_RC is a gate verdict.
+check_verdict() {
+  local label="$1" how="$2" sb="$3"
+  if [ "$GATE_RC" = 124 ]; then
+    fail_case "$label" "hook still running after ${DEADLINE}s with $how"
+    return 1
+  fi
+  if [ "$GATE_RC" = 0 ]; then
+    return 0
+  fi
+  if [ "$GATE_RC" = 2 ] && grep -q BLOCKED "$sb/.stderr"; then
+    return 0
+  fi
+  fail_case "$label" "rc=$GATE_RC with $how is not a gate verdict (stderr: $(head -c 200 "$sb/.stderr"))"
+  return 1
+}
+
 run_case() {
-  local label="$1" cmd="$2" input base_rc
+  local label="$1" cmd="$2" input sb base_rc
   input="$WORK/input.json"
   jq -nc --arg c "$cmd" '{tool_name:"Bash", tool_input:{command:$c}}' > "$input"
 
-  run_gate "$(make_sandbox)" "$input"
+  sb=$(make_sandbox)
+  run_gate "$sb" "$input"
+  check_verdict "$label" "the platform dirname" "$sb" || return
   base_rc=$GATE_RC
-  if [ "$base_rc" = 124 ]; then
-    echo "FAIL [$label]: hook still running after ${DEADLINE}s with the platform dirname" >&2
-    FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}${label} "; return
-  fi
 
-  run_gate "$(make_sandbox)" "$input" "$SHIM_DIR"
-  if [ "$GATE_RC" = 124 ]; then
-    echo "FAIL [$label]: hook still running after ${DEADLINE}s with Git for Windows dirname" >&2
-    FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}${label} "; return
-  fi
-  if [ "$GATE_RC" != "$base_rc" ]; then
-    echo "FAIL [$label]: verdict rc=$GATE_RC with Git for Windows dirname, rc=$base_rc with the platform dirname" >&2
-    FAIL=$((FAIL+1)); FAILED_CASES="${FAILED_CASES}${label} "; return
-  fi
-  echo "PASS [$label] (rc=$GATE_RC)"
+  sb=$(make_sandbox)
+  run_gate "$sb" "$input" "$SHIM_DIR"
+  check_verdict "$label" "Git for Windows dirname" "$sb" || return
+  echo "PASS [$label] (rc=$base_rc with the platform dirname, rc=$GATE_RC with Git for Windows dirname)"
   PASS=$((PASS+1))
 }
 

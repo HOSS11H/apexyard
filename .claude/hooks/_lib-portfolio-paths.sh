@@ -211,7 +211,7 @@ _portfolio_root() {
 # entered outside a Windows-drive-letter input.
 # ------------------------------------------------------------------------------
 _portfolio_canonicalize() {
-  local p="$1" dir tail=""
+  local p="$1" dir tail="" up
 
   case "$p" in
     [A-Za-z]:/*|[A-Za-z]:\\*)
@@ -236,7 +236,8 @@ _portfolio_canonicalize() {
     else
       tail="$(basename "$dir")/$tail"
     fi
-    dir="$(dirname "$dir")"
+    # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+    up="$(dirname "$dir")"; [ "$up" = "$dir" ] && break; dir="$up"
   done
 
   if [ ! -e "$dir" ]; then
