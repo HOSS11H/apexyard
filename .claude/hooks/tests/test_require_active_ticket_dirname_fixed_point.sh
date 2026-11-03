@@ -15,8 +15,9 @@
 # - The Git for Windows shim also splits on `\`. The backslash cases drive the
 #   gate with the targets that hung it. On a POSIX file system `/\` is a
 #   missing file, so the path resolver fails closed and the gate blocks before
-#   the symlink walk runs. These cases guard the nearest-existing-ancestor
-#   climbs on every OS, and the symlink walk only on Windows.
+#   the symlink walk runs. These cases guard three nearest-existing-ancestor
+#   climbs on every OS (the repo-root probe, _resolve_real_path and
+#   _ticket_path_existing_dir), and the symlink walk only on Windows.
 # - The fixed-point shim returns its input unchanged for one existing fixture
 #   directory. Every other climb stops at that existing directory first, so
 #   only the symlink walk reaches the fixed point. These cases guard the
