@@ -30,7 +30,9 @@
 # (`pwd -P` follows links), then append the remaining tail literally.
 # A final file symlink or dangling link can remain unresolved. Callers that
 # grant a path-based exemption must check the target for symlinks separately.
-# Echo the resulting path, or nothing if even "/" cannot be stat'd.
+# Echo the resulting path, or nothing when no existing ancestor is found:
+# even "/" cannot be stat'd, or the climb stops at a missing path that
+# dirname returns unchanged (Git for Windows `C:`).
 #
 # Why this matters (#883): without resolving symlinks first, a symlink
 # living under $HOME that POINTS INTO a governed tree (e.g.

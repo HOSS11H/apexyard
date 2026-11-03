@@ -427,10 +427,11 @@ _rmt_normalise_target() {
   if [ -z "$resolved" ]; then
     # _resolve_real_path returns empty only when even "/" can't be stat'd
     # (its own header comment: "should not happen for a well-formed absolute
-    # path"), or when the shared lib failed to load (see the degrade near
-    # the top of this file). Fail toward the lexical form rather than an
-    # empty RESOLVED_TARGET: the caller reads empty as "no migration-shaped
-    # target" and would let the write through UNGATED.
+    # path"), when its climb stops at a missing path that dirname returns
+    # unchanged (Git for Windows `C:`), or when the shared lib failed to load
+    # (see the degrade near the top of this file). Fail toward the lexical
+    # form rather than an empty RESOLVED_TARGET: the caller reads empty as
+    # "no migration-shaped target" and would let the write through UNGATED.
     printf '%s' "$lexical"
     return 0
   fi
