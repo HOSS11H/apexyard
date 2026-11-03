@@ -221,7 +221,7 @@ _ratc_in_temp_dir() {
 # links. Still inspect every component beneath that root, including the final
 # entry. Outside a temp root, inspect the whole path.
 _ratc_path_has_symlink_component() {
-  local path="$1" probe="$1" root="/" candidate physical
+  local path="$1" probe="$1" root="/" candidate physical parent
   for candidate in /tmp /var/tmp "${TMPDIR:-}"; do
     [ -n "$candidate" ] && [ -d "$candidate" ] || continue
     candidate="${candidate%/}"
@@ -248,7 +248,13 @@ _ratc_path_has_symlink_component() {
       */) probe="${probe%/}"; continue ;;
     esac
     [ -L "$probe" ] && return 0
-    probe="$(dirname "$probe")"
+    # Git for Windows dirname treats `\` as a separator and returns some
+    # paths unchanged: `dirname '/\'` is `/\` and `dirname 'C:'` is `C:`.
+    # Such a path is the top of its own chain and was checked just above,
+    # so stop here as at `/`. Without this stop the loop never ends.
+    parent="$(dirname "$probe")"
+    [ "$parent" = "$probe" ] && break
+    probe="$parent"
   done
   return 1
 }
@@ -321,7 +327,7 @@ _ratc_evaluate_target() {
   # walk-up finds the real ops fork. Path exemptions below MUST NOT use
   # that rewritten root — they match against the file's OWN toplevel via
   # ticket_path_is_meta_exempt (AgDR-0219 / #1531).
-  local REPO_ROOT="" _fp_dir _wt_gd _wt_gcd _main_root
+  local REPO_ROOT="" _fp_dir _fp_up _wt_gd _wt_gcd _main_root
   if [ -n "$FILE_PATH" ]; then
     case "$FILE_PATH" in
       /*)
@@ -330,7 +336,8 @@ _ratc_evaluate_target() {
         # case where the new file's parent dir doesn't exist yet.
         _fp_dir="$(dirname "$FILE_PATH")"
         while [ -n "$_fp_dir" ] && [ "$_fp_dir" != "/" ] && [ ! -d "$_fp_dir" ]; do
-          _fp_dir="$(dirname "$_fp_dir")"
+          # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+          _fp_up="$(dirname "$_fp_dir")"; [ "$_fp_up" = "$_fp_dir" ] && break; _fp_dir="$_fp_up"
         done
         if [ -d "$_fp_dir" ]; then
           REPO_ROOT=$(git -C "$_fp_dir" rev-parse --show-toplevel 2>/dev/null)
@@ -531,7 +538,7 @@ _ratc_evaluate_target() {
       local _og_in_ops_res=0
       local _og_in_ws_res=0
       local _og_in_git=0
-      local _og_real_ops="" _og_real_ws="" _og_probe _og_git_root=""
+      local _og_real_ops="" _og_real_ws="" _og_probe _og_up _og_git_root=""
 
       # Canonicalize the boundary anchors ONCE — used as the comparison
       # basis for both the raw-target check and the resolved-target check.
@@ -588,7 +595,8 @@ _ratc_evaluate_target() {
       # target always land on the same physical directory.
       _og_probe="$_og_real_target"
       while [ -n "$_og_probe" ] && [ "$_og_probe" != "/" ] && [ ! -d "$_og_probe" ]; do
-        _og_probe="$(dirname "$_og_probe")"
+        # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+        _og_up="$(dirname "$_og_probe")"; [ "$_og_up" = "$_og_probe" ] && break; _og_probe="$_og_up"
       done
       if [ -n "$_og_probe" ] && [ -d "$_og_probe" ]; then
         _og_git_root=$(git -C "$_og_probe" rev-parse --show-toplevel 2>/dev/null) || _og_git_root=""

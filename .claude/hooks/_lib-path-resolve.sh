@@ -30,14 +30,16 @@
 # (`pwd -P` follows links), then append the remaining tail literally.
 # A final file symlink or dangling link can remain unresolved. Callers that
 # grant a path-based exemption must check the target for symlinks separately.
-# Echo the resulting path, or nothing if even "/" cannot be stat'd.
+# Echo the resulting path, or nothing when no existing ancestor is found:
+# even "/" cannot be stat'd, or the climb stops at a missing path that
+# dirname returns unchanged (Git for Windows `C:`).
 #
 # Why this matters (#883): without resolving symlinks first, a symlink
 # living under $HOME that POINTS INTO a governed tree (e.g.
 # ~/link-into-repo → the ops fork) would compare as "outside" the repo
 # under a naive string-prefix check, silently bypassing the gate.
 _resolve_real_path() {
-  local p="$1" dir tail=""
+  local p="$1" dir tail="" up
   [ -n "$p" ] || return 0
   dir="$p"
   while [ -n "$dir" ] && [ "$dir" != "/" ] && [ ! -e "$dir" ]; do
@@ -46,7 +48,8 @@ _resolve_real_path() {
     else
       tail="$(basename "$dir")/$tail"
     fi
-    dir="$(dirname "$dir")"
+    # Git for Windows dirname returns `C:` unchanged; stop there as at `/`.
+    up="$(dirname "$dir")"; [ "$up" = "$dir" ] && break; dir="$up"
   done
   if [ ! -e "$dir" ]; then
     return 0
